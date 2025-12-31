@@ -108,7 +108,7 @@ subscribes to topics, then runs a loop reading messages till done
 ```zig
 fn consumer(pubsub: *PUB_SUB) !void {
     // connect to the engine
-    var mq = try pubsub.client();
+    var mq = try pubsub.connect();
 
     // deinit will unsubscribe, clean up, etc
     defer mq.deinit();
@@ -225,7 +225,7 @@ Here is how to do that :
 
 ```zig
 fn consumer(game: GAME, p: PUB_SUB) void {
-    var mq = try p.client();
+    var mq = try p.connect();
     defer mq.deinit();
 
     // Set a filter saying we only want to receive messages
@@ -296,7 +296,7 @@ But there is more that I will need after that, so will be adding the following f
 multiple services connecting to it. 
 - The API in the app will be identical to the embedded API - just an extra set of options on the 
 pubsub.init() function to say whether its local/embedded, or somewhere over the network.
-- Client API will be the same - just call pubsub.client() to get an mq that you can mq.next() on. 
+- Client API will be the same - just call pubsub.connect() to get an mq that you can mq.next() on. 
 The fact that its over the network will be transparent.
 - The networked version will, of course, enable publish() results to fan out across all peer services.
 

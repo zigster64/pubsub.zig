@@ -50,7 +50,7 @@ test "PubSub: Basic Signal (Zero Alloc)" {
     var pubsub = PS.init(io, allocator);
     defer pubsub.deinit();
 
-    var sub = try pubsub.client();
+    var sub = try pubsub.connect();
     defer sub.deinit();
 
     try sub.subscribe(.ping);
@@ -77,11 +77,11 @@ test "PubSub: Complex Data (Reference Counting)" {
     var pubsub = PS.init(io, allocator);
     defer pubsub.deinit();
 
-    var sub1 = try pubsub.client();
+    var sub1 = try pubsub.connect();
     defer sub1.deinit();
     try sub1.subscribe(.data);
 
-    var sub2 = try pubsub.client();
+    var sub2 = try pubsub.connect();
     defer sub2.deinit();
     try sub2.subscribe(.data);
 
@@ -127,12 +127,12 @@ test "PubSub: Filter Routing" {
     const uuid_a = 0xAAAA_AAAA_AAAA_AAAA;
     const filter_a = FilterId.from(uuid_a);
 
-    var sub_a = try pubsub.client();
+    var sub_a = try pubsub.connect();
     defer sub_a.deinit();
     try sub_a.subscribe(.ping);
     sub_a.setFilter(filter_a);
 
-    var sub_b = try pubsub.client();
+    var sub_b = try pubsub.connect();
     defer sub_b.deinit();
     try sub_b.subscribe(.ping);
 
@@ -204,7 +204,7 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
     var ctx = E2EContext{ .ps = &pubsub };
 
     // 1. SETUP CONSUMER FIRST (So we don't miss any messages)
-    var sub = try pubsub.client();
+    var sub = try pubsub.connect();
     defer sub.deinit();
     try sub.subscribe(.data);
     try sub.subscribe(.ping);
@@ -253,7 +253,7 @@ test "PubSub: E2E Concurrent Producer/Consumer out of order" {
     // if we dont, then there is something horribly out of whack with the threading
     // implementation
 
-    var sub = try pubsub.client();
+    var sub = try pubsub.connect();
     defer sub.deinit();
     try sub.subscribe(.data);
     try sub.subscribe(.ping);

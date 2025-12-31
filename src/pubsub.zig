@@ -229,7 +229,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
         }
 
-        pub fn client(self: *Self) !Subscriber {
+        pub fn connect(self: *Self) !Subscriber {
             return Subscriber.init(self.allocator, self);
         }
 

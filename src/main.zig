@@ -159,7 +159,7 @@ fn producer(ctx: *App, delay: i64) !void {
 }
 
 fn consumer(ctx: *App, id: u32) !void {
-    var mq = try ctx.pubsub.client();
+    var mq = try ctx.pubsub.connect();
     defer {
         std.debug.print("[CONS {d}] Stopped\n", .{id});
         mq.deinit();
@@ -207,7 +207,7 @@ fn consumer(ctx: *App, id: u32) !void {
 }
 
 fn batsignal(ctx: *App) !void {
-    var mq = try ctx.pubsub.client();
+    var mq = try ctx.pubsub.connect();
     defer {
         std.debug.print("[BATSIGNAL] Stopped\n", .{});
         mq.deinit();
