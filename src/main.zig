@@ -6,19 +6,17 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    const smp = std.heap.smp_allocator;
 
-    var threaded: Io.Threaded = .init(allocator);
+    var threaded: Io.Threaded = .init(smp);
     defer threaded.deinit();
     threaded.stack_size = 2 * 1024 * 1024;
     const io = threaded.io();
 
     var app = App{
-        .allocator = allocator,
+        .allocator = smp,
         .io = io,
-        .pubsub = PubSub(MsgSchema).init(io, allocator),
+        .pubsub = PubSub(MsgSchema).init(io, smp),
         .running = std.atomic.Value(bool).init(true),
     };
     defer app.pubsub.deinit();

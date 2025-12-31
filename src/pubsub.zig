@@ -128,6 +128,7 @@ pub fn PubSub(comptime UserPayload: type) type {
 
                 while (self.queue.len == 0) {
                     if (self.timeout_ns) |ns| {
+                        // TODO - this will probably change soon to std.Io.something
                         self.cond.timedWait(&self.mutex, ns) catch |err| {
                             if (err == error.Timeout) return .timeout;
                             return err;
@@ -170,11 +171,13 @@ pub fn PubSub(comptime UserPayload: type) type {
             pub fn setFilter(self: *Subscriber, id: FilterId) void {
                 self.filter_id.store(@intFromEnum(id), .monotonic);
             }
+
             pub fn setTimeout(self: *Subscriber, ns: u64) void {
                 self.mutex.lock();
                 defer self.mutex.unlock();
                 self.timeout_ns = ns;
             }
+
             pub fn subscribe(self: *Subscriber, topic: Topic) !void {
                 const index = @intFromEnum(topic);
                 self.parent.locks[index].lock();
