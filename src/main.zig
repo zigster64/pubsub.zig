@@ -12,12 +12,13 @@ pub fn main() !void {
 
     var threaded: Io.Threaded = .init(allocator);
     defer threaded.deinit();
+    threaded.stack_size = 2 * 1024 * 1024;
     const io = threaded.io();
 
     var app = App{
         .allocator = allocator,
         .io = io,
-        .pubsub = PubSub(AppPayload).init(io, allocator),
+        .pubsub = PubSub(MsgSchema).init(io, allocator),
         .running = std.atomic.Value(bool).init(true),
     };
     defer app.pubsub.deinit();
@@ -27,6 +28,7 @@ pub fn main() !void {
     var f_consumer1 = try std.Io.concurrent(io, consumer, .{ &app, 1 });
     var f_consumer2 = try std.Io.concurrent(io, consumer, .{ &app, 2 });
     var f_consumer3 = try std.Io.concurrent(io, consumer, .{ &app, 3 });
+    var f_batsignal = try std.Io.concurrent(io, batsignal, .{&app});
 
     // wait 30 seconds and add another fast producer
     try std.Io.sleep(app.io, .fromSeconds(20), .real);
@@ -52,6 +54,7 @@ pub fn main() !void {
     try f_consumer1.await(io);
     try f_consumer2.await(io);
     try f_consumer3.await(io);
+    try f_batsignal.await(io);
     try f_producer2.await(io);
     try f_producer3.await(io);
 }
@@ -60,14 +63,14 @@ pub fn main() !void {
 const App = struct {
     io: std.Io,
     allocator: Allocator,
-    pubsub: PubSub(AppPayload),
+    pubsub: PubSub(MsgSchema),
     running: std.atomic.Value(bool),
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator) App {
         return .{
             .io = io,
             .allocator = allocator,
-            .pubsub = PubSub(AppPayload).init(allocator),
+            .pubsub = PubSub(MsgSchema).init(allocator),
             .running = std.atomic.Value(bool).init(true),
         };
     }
@@ -81,26 +84,44 @@ const App = struct {
     }
 };
 
-pub const AppPayload = union(enum) {
+/// A Type-Safe Filter ID backed by u128 (UUID size).
+/// The '_' allows this enum to hold ANY u128 value (Non-Exhaustive).
+pub const FilterId = enum(u128) {
+    /// Broadcast to everyone (Value 0)
+    all = 0,
+
+    /// Allows casting any UUID into this type
+    _,
+
+    /// Helper to convert a raw UUID integer into a FilterId
+    pub fn from(uuid: u128) FilterId {
+        return @enumFromInt(uuid);
+    }
+};
+
+// The schema we use to map messages
+pub const MsgSchema = union(enum) {
     cats: struct { id: u32, name: []const u8 },
     prices: struct { currency: []const u8, value: u64 },
     system_status: enum { starting, stopping, err },
+    bat_signal: void, // just a signal with no data
 
-    pub fn clone(self: AppPayload, arena: Allocator) !AppPayload {
+    pub fn clone(self: MsgSchema, arena: Allocator) !MsgSchema {
         switch (self) {
-            .cats => |c| return AppPayload{
+            .cats => |c| return MsgSchema{
                 .cats = .{
                     .id = c.id,
                     .name = try arena.dupe(u8, c.name),
                 },
             },
-            .prices => |p| return AppPayload{
+            .prices => |p| return MsgSchema{
                 .prices = .{
                     .currency = try arena.dupe(u8, p.currency),
                     .value = p.value,
                 },
             },
-            .system_status => |s| return AppPayload{ .system_status = s },
+            .bat_signal => return MsgSchema{ .bat_signal = {} },
+            .system_status => |s| return MsgSchema{ .system_status = s },
         }
     }
 };
@@ -109,7 +130,7 @@ fn producer(ctx: *App, delay: i64) !void {
     var id_counter: u32 = 0;
 
     // Send a 'Starting' signal immediately
-    try ctx.pubsub.publish(.{ .system_status = .starting });
+    try ctx.pubsub.publish(.{ .system_status = .starting }, .all);
     var buf: [64]u8 = undefined;
 
     while (ctx.isRunning()) {
@@ -118,28 +139,33 @@ fn producer(ctx: *App, delay: i64) !void {
         // 1. Publish Cat (Every tick)
         {
             const name = try std.fmt.bufPrint(&buf, "Cat_{d}", .{id_counter});
-            try ctx.pubsub.publish(.{ .cats = .{ .id = id_counter, .name = name } });
+            try ctx.pubsub.publish(.{ .cats = .{ .id = id_counter, .name = name } }, .all);
         }
 
         // 2. Publish Price (Every 3rd tick)
         if (id_counter % 3 == 0) {
-            try ctx.pubsub.publish(.{ .prices = .{ .currency = "USD", .value = id_counter * 150 } });
+            try ctx.pubsub.publish(.{ .prices = .{ .currency = "USD", .value = id_counter * 150 } }, .all);
         }
 
         // 3. Simulate Error (Every 10th tick)
         if (delay > 100 and id_counter % 10 == 0) {
-            try ctx.pubsub.publish(.{ .system_status = .err });
+            try ctx.pubsub.publish(.{ .system_status = .err }, .all);
 
             // then sleep for 3 seconds, which will trigger timeouts on the consumers
             std.debug.print("[PROD] Sleep 3s\n", .{});
             try std.Io.sleep(ctx.io, .fromSeconds(3), .real);
         }
 
+        // 4. Issue the bat signal every 25th tick
+        if (id_counter % 25 == 0) {
+            try ctx.pubsub.publish(.{ .bat_signal = {} }, .all);
+        }
+
         try std.Io.sleep(ctx.io, .fromMilliseconds(delay), .real);
     }
 
     // Send 'Stopping' signal before exit
-    try ctx.pubsub.publish(.{ .system_status = .stopping });
+    try ctx.pubsub.publish(.{ .system_status = .stopping }, .all);
 }
 
 fn consumer(ctx: *App, id: u32) !void {
@@ -156,11 +182,9 @@ fn consumer(ctx: *App, id: u32) !void {
     std.debug.print("[CONS {d}] Started\n", .{id});
 
     while (ctx.isRunning()) {
-        switch (mq.next()) {
+        const event = (try mq.next()) orelse return; // no more messages
+        switch (event) {
             .msg => |m| {
-                // Memory Safety: Ensure we release the ref-counted message
-                defer m.deinit(ctx.allocator);
-
                 switch (m.topic) {
                     .cats => {
                         std.debug.print("  -> [CONS {d}] Cat: {s} (ID: {d})\n", .{ id, m.payload.cats.name, m.payload.cats.id });
@@ -178,17 +202,38 @@ fn consumer(ctx: *App, id: u32) !void {
                             .err => std.debug.print("  -> [CONS {d}] ⚠️ SYSTEM ERROR\n", .{id}),
                         }
                     },
+                    else => {},
                 }
             },
             .timeout => {
                 // Heartbeat logic could go here
                 std.debug.print("  -> [CONS {d}] ⏰ 2s TIMEOUT reading Msg Queue\n", .{id});
             },
-            .err => |e| {
-                std.debug.print("Error: {}\n", .{e});
-                break;
+        }
+    }
+}
+
+fn batsignal(ctx: *App) !void {
+    var mq = try ctx.pubsub.client();
+    defer mq.deinit();
+
+    // 1. Subscribe to everything we care about
+    try mq.subscribe(.bat_signal);
+
+    std.debug.print("[BATSIGNAL] Started\n", .{});
+
+    while (ctx.isRunning()) {
+        const event = try mq.next() orelse return; // no more messages
+        switch (event) {
+            .msg => |m| {
+                switch (m.topic) {
+                    .bat_signal => {
+                        std.debug.print("  -> [BATSIGNAL] Received\n", .{});
+                    },
+                    else => {},
+                }
             },
-            .quit => break,
+            else => {},
         }
     }
 }
