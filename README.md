@@ -129,8 +129,8 @@ fn consumer(pubsub: *PUB_SUB) !void {
     // if its a .msg, switch on the m.topic to decode the tagged enum type
     //   - the m.payload.ENUM contains the decoded payload
     // if its a timeout, it received no msg by the timeout time - do housekeeping
-    // if there are no more messages, mq.next() returns NULL
-    // if there was a problem, mq.next() returns an error
+    // if the pubsub service is finished, no more msgs will arrive, so mq.next() returns NULL
+    // if there was an error, mq.next() returns an error
     while (try mq.next()) |event| {
         switch (event) {
             .msg => |m| {
