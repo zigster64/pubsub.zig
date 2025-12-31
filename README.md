@@ -1,6 +1,6 @@
 # Embedded PubSub Engine for Zig 0.16
 
-![Cyberpunk Zig PubSub Architecture](assets/pubsub.zig.jpg)
+![Cyberpunk Zig PubSub Architecture](assets/pubsub.jpg)
 
 This repo is just a test jig for setting up a PubSub service for use in Zig 0.16
 with an example producer/consumer and broadcast pattern
