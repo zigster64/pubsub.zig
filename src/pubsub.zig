@@ -1,7 +1,4 @@
 const std = @import("std");
-// Assuming 'Io' is something specific to your environment/library
-// If this is standard zig, it usually is 'std.io' or 'std.os',
-// but I will keep your definition.
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
