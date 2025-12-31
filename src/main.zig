@@ -15,7 +15,7 @@ pub fn main() !void {
     const io = threaded.io();
 
     // Configuration
-    const address = try std.Io.net.IpAddress.parseIp4("0.0.0.0", 9000);
+    const address = try std.Io.net.IpAddress.parseIp6("::", 9000);
     var server = try address.listen(io, .{
         .reuse_address = true,
         .kernel_backlog = 1024,
@@ -69,11 +69,10 @@ const PubSubService = struct {
 
     fn handleConnection(self: *PubSubService, conn: std.Io.net.Stream) !void {
         var read_buf: [1024]u8 = undefined;
-        var r = try conn.reader(self.io, &read_buf);
+        var r = conn.reader(self.io, &read_buf);
 
         var buf: [1024]u8 = undefined;
-        const n = try r.interface.read(&buf);
-        if (n == 0) return;
+        const n = try r.interface.readSliceAll(&buf);
 
         const line = mem.trimRight(u8, buf[0..n], "\n");
         var it = mem.tokenizeAny(u8, line, ": ");
