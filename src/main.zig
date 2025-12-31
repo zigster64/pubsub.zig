@@ -1,148 +1,125 @@
 const std = @import("std");
-const posix = std.posix;
-const mem = std.mem;
-const Allocator = mem.Allocator;
+const pubsub_module = @import("pubsub.zig");
+const PubSub = pubsub_module.PubSub;
 
-const Verb = enum { subscribe, drop, publish, unknown };
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
     defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
 
-    var threaded: std.Io.Threaded = .init(allocator);
+    var threaded: Io.Threaded = .init(allocator);
     defer threaded.deinit();
     const io = threaded.io();
 
-    // Configuration
-    const address = try std.Io.net.IpAddress.parseIp6("::", 9000);
-    var server = try address.listen(io, .{
-        .reuse_address = true,
-        .kernel_backlog = 1024,
-    });
-    defer server.deinit(io);
+    var app = App{
+        .allocator = allocator,
+        .io = io,
+        .pubsub = PubSub(AppPayload).init(allocator),
+        .running = std.atomic.Value(bool).init(true),
+    };
+    defer app.pubsub.deinit();
 
-    var service = PubSubService.init(io, allocator);
-    defer service.deinit();
+    var f_producer = try std.Io.concurrent(io, producer, .{&app});
+    var f_consumer1 = try std.Io.concurrent(io, consumer, .{ &app, 1 });
+    var f_consumer2 = try std.Io.concurrent(io, consumer, .{ &app, 2 });
+    var f_consumer3 = try std.Io.concurrent(io, consumer, .{ &app, 3 });
 
-    std.debug.print("PubSub Service listening on {}\n", .{address});
+    try std.Io.sleep(app.io, .fromSeconds(2), .real);
+    app.running.store(false, .monotonic);
 
-    while (true) {
-        const conn = try server.accept(io);
-        // In a real app, spawn a thread or use an event loop (kqueue/epoll)
-        // For 40k subs, you'll want an async event loop.
-        try service.handleConnection(conn);
-    }
+    try f_producer.await(io);
+    try f_consumer1.await(io);
+    try f_consumer2.await(io);
+    try f_consumer3.await(io);
 }
 
-const PubSubService = struct {
+// App Context and PubSub payload definitions
+const App = struct {
     io: std.Io,
     allocator: Allocator,
-    // Maps Topic Name -> List of Subscriber FDs
-    topics: std.StringHashMap(std.ArrayList(posix.socket_t)),
-    // Maps Socket FD -> List of Topics (for easy cleanup on 'drop')
-    subs: std.AutoHashMap(posix.socket_t, std.ArrayList([]const u8)),
+    pubsub: PubSub(AppPayload),
+    running: std.atomic.Value(bool),
 
-    fn init(io: std.Io, allocator: Allocator) PubSubService {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator) App {
         return .{
             .io = io,
             .allocator = allocator,
-            .topics = std.StringHashMap(std.ArrayList(posix.socket_t)).init(allocator),
-            .subs = std.AutoHashMap(posix.socket_t, std.ArrayList([]const u8)).init(allocator),
+            .pubsub = PubSub(AppPayload).init(allocator),
+            .running = std.atomic.Value(bool).init(true),
         };
     }
 
-    fn deinit(self: *PubSubService) void {
-        var it = self.topics.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.topics.deinit();
-
-        var sit = self.subs.iterator();
-        while (sit.next()) |entry| {
-            entry.value_ptr.deinit(self.allocator);
-        }
-        self.subs.deinit();
+    pub fn isRunning(app: *App) bool {
+        return app.running.load(.monotonic);
     }
 
-    fn handleConnection(self: *PubSubService, conn: std.Io.net.Stream) !void {
-        var read_buf: [1024]u8 = undefined;
-        var r = conn.reader(self.io, &read_buf);
-
-        var buf: [1024]u8 = undefined;
-        const n = try r.interface.readSliceAll(&buf);
-
-        const line = mem.trimRight(u8, buf[0..n], "\n");
-        var it = mem.tokenizeAny(u8, line, ": ");
-
-        const verb_str = it.next() orelse return;
-        const verb = std.meta.stringToEnum(Verb, verb_str) orelse .unknown;
-
-        switch (verb) {
-            .subscribe => {
-                const id_str = it.next() orelse return; // In this version, we use FD as ID
-                const topic = it.next() orelse return;
-                try self.subscribe(conn.stream.handle, topic);
-                std.debug.print("Subscribed {s} to {s}\n", .{ id_str, topic });
-            },
-            .publish => {
-                const topic = it.next() orelse return;
-                const data = it.rest();
-                try self.broadcast(topic, data);
-            },
-            .drop => {
-                try self.drop(conn.stream.handle);
-            },
-            else => {},
-        }
-    }
-
-    fn subscribe(self: *PubSubService, fd: posix.socket_t, topic: []const u8) !void {
-        // Add to topics map
-        var res = try self.topics.getOrPut(topic);
-        if (!res.found_existing) {
-            res.key_ptr.* = try self.allocator.dupe(u8, topic);
-            res.value_ptr.* = std.ArrayList(posix.socket_t).init(self.allocator);
-        }
-        try res.value_ptr.append(fd);
-
-        // Add to reverse lookup for cleanup
-        var sub_res = try self.subs.getOrPut(fd);
-        if (!sub_res.found_existing) {
-            sub_res.value_ptr.* = std.ArrayList([]const u8).init(self.allocator);
-        }
-        try sub_res.value_ptr.append(res.key_ptr.*);
-    }
-
-    fn broadcast(self: *PubSubService, topic: []const u8, data: []const u8) !void {
-        if (self.topics.get(topic)) |subscribers| {
-            for (subscribers.items) |fd| {
-                const stream = std.Io.net.Stream{ .handle = fd };
-                _ = stream.write(data) catch |err| {
-                    std.debug.print("Failed to write to {}: {}\n", .{ fd, err });
-                };
-            }
-        }
-    }
-
-    fn drop(self: *PubSubService, fd: posix.socket_t) !void {
-        if (self.subs.fetchRemove(fd)) |entry| {
-            var topics_list = entry.value;
-            defer topics_list.deinit();
-
-            for (topics_list.items) |t| {
-                if (self.topics.getPtr(t)) |list| {
-                    for (list.items, 0..) |item_fd, i| {
-                        if (item_fd == fd) {
-                            _ = list.swapRemove(i);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        posix.close(fd);
+    pub fn setRunning(app: *App, value: bool) void {
+        app.running.store(value, .monotonic);
     }
 };
+
+pub const AppPayload = union(enum) {
+    cats: struct { id: u32, name: []const u8 },
+    prices: struct { currency: []const u8, value: u64 },
+    system_status: enum { starting, stopping, err },
+
+    pub fn clone(self: AppPayload, arena: Allocator) !AppPayload {
+        switch (self) {
+            .cats => |c| return AppPayload{
+                .cats = .{
+                    .id = c.id,
+                    .name = try arena.dupe(u8, c.name),
+                },
+            },
+            .prices => |p| return AppPayload{
+                .prices = .{
+                    .currency = try arena.dupe(u8, p.currency),
+                    .value = p.value,
+                },
+            },
+            .system_status => |s| return AppPayload{ .system_status = s },
+        }
+    }
+};
+
+fn producer(ctx: *App) !void {
+    var id_counter: u32 = 0;
+    while (ctx.isRunning()) {
+        id_counter += 1;
+        {
+            var buf: [64]u8 = undefined;
+            const name = try std.fmt.bufPrint(&buf, "Cat_{d}", .{id_counter});
+            std.debug.print("[PROD] Publishing {s}\n", .{name});
+            try ctx.pubsub.publish(.{ .cats = .{ .id = id_counter, .name = name } });
+        }
+        try std.Io.sleep(ctx.io, .fromMilliseconds(500), .real);
+    }
+}
+
+fn consumer(ctx: *App, id: u32) !void {
+    var mq = try ctx.pubsub.subscriber();
+    defer mq.deinit();
+
+    try mq.subscribe(.cats);
+    mq.setTimeout(2 * std.time.ns_per_s);
+
+    std.debug.print("[CONS {d}] Started\n", .{id});
+
+    while (ctx.isRunning()) {
+        switch (mq.next()) {
+            .msg => |m| {
+                defer m.deinit(ctx.allocator);
+                std.debug.print("  -> [CONS {d}] Got Cat: {s}\n", .{ id, m.payload.cats.name });
+            },
+            .timeout => {},
+            .err => |e| {
+                std.debug.print("Error: {}\n", .{e});
+                break;
+            },
+            .quit => break,
+        }
+    }
+}
