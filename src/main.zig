@@ -19,7 +19,6 @@ pub fn main() !void {
         .allocator = smp,
         .io = io,
         .pubsub = PubSub(MsgSchema).init(io, smp),
-        .running = std.atomic.Value(bool).init(true),
     };
     defer app.pubsub.deinit();
 
@@ -47,7 +46,8 @@ pub fn main() !void {
 
     try std.Io.sleep(app.io, .fromSeconds(120), .real);
 
-    app.running.store(false, .monotonic); // shut the whole thing down !
+    // shutdown the pubsub operation
+    app.pubsub.shutdown();
 
     try f_producer1.await(io);
     try f_consumer0.await(io);
@@ -64,23 +64,13 @@ const App = struct {
     io: std.Io,
     allocator: Allocator,
     pubsub: PubSub(MsgSchema),
-    running: std.atomic.Value(bool),
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator) App {
         return .{
             .io = io,
             .allocator = allocator,
             .pubsub = PubSub(MsgSchema).init(allocator),
-            .running = std.atomic.Value(bool).init(true),
         };
-    }
-
-    pub fn isRunning(app: *App) bool {
-        return app.running.load(.monotonic);
-    }
-
-    pub fn setRunning(app: *App, value: bool) void {
-        app.running.store(value, .monotonic);
     }
 };
 
@@ -133,7 +123,7 @@ fn producer(ctx: *App, delay: i64) !void {
     try ctx.pubsub.publish(.{ .system_status = .starting }, .all);
     var buf: [64]u8 = undefined;
 
-    while (ctx.isRunning()) {
+    while (ctx.pubsub.isRunning()) {
         id_counter += 1;
 
         // 1. Publish Cat (Every tick)
@@ -170,7 +160,10 @@ fn producer(ctx: *App, delay: i64) !void {
 
 fn consumer(ctx: *App, id: u32) !void {
     var mq = try ctx.pubsub.client();
-    defer mq.deinit();
+    defer {
+        std.debug.print("[CONS {d}] Stopped\n", .{id});
+        mq.deinit();
+    }
 
     // 1. Subscribe to everything we care about
     if (id != 1) try mq.subscribe(.cats);
@@ -181,7 +174,7 @@ fn consumer(ctx: *App, id: u32) !void {
 
     std.debug.print("[CONS {d}] Started\n", .{id});
 
-    while (ctx.isRunning()) {
+    while (ctx.pubsub.isRunning()) {
         const event = (try mq.next()) orelse return; // no more messages
         switch (event) {
             .msg => |m| {
@@ -215,14 +208,17 @@ fn consumer(ctx: *App, id: u32) !void {
 
 fn batsignal(ctx: *App) !void {
     var mq = try ctx.pubsub.client();
-    defer mq.deinit();
+    defer {
+        std.debug.print("[BATSIGNAL] Stopped\n", .{});
+        mq.deinit();
+    }
 
     // 1. Subscribe to everything we care about
     try mq.subscribe(.bat_signal);
 
     std.debug.print("[BATSIGNAL] Started\n", .{});
 
-    while (ctx.isRunning()) {
+    while (ctx.pubsub.isRunning()) {
         const event = try mq.next() orelse return; // no more messages
         switch (event) {
             .msg => |m| {

@@ -21,7 +21,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         const Self = @This();
 
         // --------------------------------------------------------
-        // Internal Types (Moved INSIDE Self)
+        // Internal Types
         // --------------------------------------------------------
 
         const RcEnvelope = struct {
@@ -49,10 +49,9 @@ pub fn PubSub(comptime UserPayload: type) type {
         };
 
         // --------------------------------------------------------
-        // Public Types (Moved INSIDE Self)
+        // Public Types
         // --------------------------------------------------------
 
-        // Now Message can see Subscriber because they are in the same scope
         pub const Message = struct {
             envelope: ?*RcEnvelope,
             payload: UserPayload,
@@ -93,16 +92,22 @@ pub fn PubSub(comptime UserPayload: type) type {
                 for (self.subscriptions.items) |topic| {
                     self.parent.unsubscribeRaw(topic, self);
                 }
+
                 if (self.active_envelope) |env| {
                     env.release(self.allocator);
                     self.active_envelope = null;
                 }
+
+                //    This prevents race conditions with Shutdown() calling sub.close()
+                self.mutex.lock();
                 while (self.queue.popFront()) |item| {
                     switch (item) {
                         .data => |d| if (d.envelope) |e| e.release(self.allocator),
                         else => {},
                     }
                 }
+                self.mutex.unlock(); // Unlock before destroying the queue
+
                 self.subscriptions.deinit(self.allocator);
                 self.queue.deinit(self.allocator);
             }
@@ -115,6 +120,11 @@ pub fn PubSub(comptime UserPayload: type) type {
                     self.active_envelope = null;
                     e.release(alloc);
                 }
+            }
+
+            pub fn close(self: *Subscriber) void {
+                // Inject the special .quit signal locally
+                self.push(.quit) catch {};
             }
 
             pub fn next(self: *Subscriber) !?Event {
@@ -202,6 +212,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         registry: [TopicCount]std.ArrayList(*Subscriber) = undefined,
         locks: [TopicCount]std.Thread.RwLock = undefined,
         paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
 
         pub fn init(io: Io, allocator: Allocator) Self {
             var self = Self{ .io = io, .allocator = allocator };
@@ -236,8 +247,34 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
         }
 
+        pub fn pause(self: *Self) void {
+            self.paused.store(true, .monotonic);
+        }
+
         pub fn unpause(self: *Self) void {
             self.paused.store(false, .monotonic);
+        }
+
+        pub fn shutdown(self: *Self) void {
+            self.paused.store(true, .seq_cst);
+            self.running.store(false, .seq_cst);
+
+            inline for (0..TopicCount) |i| {
+                self.locks[i].lockShared();
+                defer self.locks[i].unlockShared();
+
+                for (self.registry[i].items) |sub| {
+                    sub.close();
+                }
+            }
+        }
+
+        pub fn isPaused(self: *Self) bool {
+            return self.paused.load(.monotonic);
+        }
+
+        pub fn isRunning(self: *Self) bool {
+            return self.running.load(.monotonic);
         }
 
         pub fn publish(self: *Self, payload: UserPayload, filter_id: FilterId) !void {

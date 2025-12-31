@@ -123,7 +123,8 @@ fn consumer(pubsub: *PUB_SUB) !void {
 
     std.debug.print("Consumer Started\n", .{id});
 
-    // mq.next() will return an event of type MsgSchema
+    // mq.next() will block and wait for a new message
+    // When it gets one, it will return an event of type MsgSchema
     // if you get a valid value, the check if its a .msg or .timeout
     // if its a .msg, switch on the m.topic to decode the tagged enum type
     //   - the m.payload.ENUM contains the decoded payload
@@ -261,4 +262,44 @@ Then when publishing a message, use the last parameter to set the FilterID.
     // then broadcast a game clock update to every player on every game
     try pubsub.publish(.{ .clock = {} }, .all);
 ```
+
+# Engine Control
+
+There are a few helper functions that you can use to control the PubSub engine while its running
+
+```zig
+pubsub.pause();
+pubsub.unpause();
+pubsub.togglePause();
+pubsub.sleep(Duration);
+pubsub.shutdown();
+```
+These functions can be used to pause / awaken / stop the engine.
+
+You can call `sleep(Duration)` to put the engine on pause for the given duration
+
+You can call
+```zig
+pubsub.isPaused() bool;
+pubsub.isRunning() bool;
+```
+To read the current state.
+
+# TODO 
+
+The above functions are all I need for now to finish off the embedded PubSub that I need now for
+another project.
+
+But there is more that I will need after that, so will be adding the following features :
+
+- Wrap the whole lib in a network interface, so you can run a standalone PubSub service and have
+multiple services connecting to it. 
+- The API in the app will be identical to the embedded API - just an extra set of options on the 
+pubsub.init() function to say whether its local/embedded, or somewhere over the network.
+- Client API will be the same - just call pubsub.client() to get an mq that you can mq.next() on. 
+The fact that its over the network will be transparent.
+- The networked version will, of course, enable publish() results to fan out across all peer services.
+
+Its not entirely hard to do, but still a lot of work to get right.
+
 
