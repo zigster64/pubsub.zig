@@ -53,6 +53,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         allocator: Allocator,
         registry: [TopicCount]std.ArrayListUnmanaged(*Subscriber) = undefined,
         locks: [TopicCount]std.Thread.RwLock = undefined,
+        paused: std.atomic.Value(bool) = .init(false),
 
         pub fn init(allocator: Allocator) Self {
             var self = Self{ .allocator = allocator };
@@ -69,11 +70,25 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
         }
 
-        pub fn subscriber(self: *Self) !Subscriber {
+        pub fn togglePause(self: *Self) void {
+            _ = self.paused.swap(!self.paused.load(.acquire), .acq_rel);
+        }
+
+        pub fn pause(self: *Self) void {
+            self.paused.store(true, .monotonic);
+        }
+
+        pub fn unpause(self: *Self) void {
+            self.paused.store(false, .monotonic);
+        }
+
+        pub fn client(self: *Self) !Subscriber {
             return Subscriber.init(self.allocator, self);
         }
 
         pub fn publish(self: *Self, payload: UserPayload) !void {
+            if (self.paused.load(.monotonic)) return;
+
             const topic = std.meta.activeTag(payload);
             const index = @intFromEnum(topic);
 

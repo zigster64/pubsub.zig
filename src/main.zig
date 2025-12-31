@@ -22,18 +22,33 @@ pub fn main() !void {
     };
     defer app.pubsub.deinit();
 
-    var f_producer = try std.Io.concurrent(io, producer, .{&app});
+    var f_producer1 = try std.Io.concurrent(io, producer, .{ &app, 200 });
+    var f_consumer0 = try std.Io.concurrent(io, consumer, .{ &app, 0 });
     var f_consumer1 = try std.Io.concurrent(io, consumer, .{ &app, 1 });
     var f_consumer2 = try std.Io.concurrent(io, consumer, .{ &app, 2 });
     var f_consumer3 = try std.Io.concurrent(io, consumer, .{ &app, 3 });
 
-    try std.Io.sleep(app.io, .fromSeconds(60), .real);
+    // wait 30 seconds and add another fast producer
+    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    std.debug.print("🚀 Turbo Producer Mode Initiating in 5s\n", .{});
+    try std.Io.sleep(app.io, .fromSeconds(5), .real);
+    var f_producer2 = try std.Io.concurrent(io, producer, .{ &app, 50 });
+    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    app.pubsub.togglePause();
+    std.debug.print("😴 Pausing the whole pubsub system for 20s\n", .{});
+    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    app.pubsub.togglePause();
+
+    try std.Io.sleep(app.io, .fromSeconds(120), .real);
+    app.pubsub.togglePause();
     app.running.store(false, .monotonic); // shut the whole thing down !
 
-    try f_producer.await(io);
+    try f_producer1.await(io);
+    try f_consumer0.await(io);
     try f_consumer1.await(io);
     try f_consumer2.await(io);
     try f_consumer3.await(io);
+    try f_producer2.await(io);
 }
 
 // App Context and PubSub payload definitions
@@ -85,7 +100,7 @@ pub const AppPayload = union(enum) {
     }
 };
 
-fn producer(ctx: *App) !void {
+fn producer(ctx: *App, delay: i64) !void {
     var id_counter: u32 = 0;
 
     // Send a 'Starting' signal immediately
@@ -107,7 +122,7 @@ fn producer(ctx: *App) !void {
         }
 
         // 3. Simulate Error (Every 10th tick)
-        if (id_counter % 10 == 0) {
+        if (delay > 100 and id_counter % 10 == 0) {
             try ctx.pubsub.publish(.{ .system_status = .err });
 
             // then sleep for 3 seconds, which will trigger timeouts on the consumers
@@ -115,7 +130,7 @@ fn producer(ctx: *App) !void {
             try std.Io.sleep(ctx.io, .fromSeconds(3), .real);
         }
 
-        try std.Io.sleep(ctx.io, .fromMilliseconds(200), .real);
+        try std.Io.sleep(ctx.io, .fromMilliseconds(delay), .real);
     }
 
     // Send 'Stopping' signal before exit
@@ -123,13 +138,13 @@ fn producer(ctx: *App) !void {
 }
 
 fn consumer(ctx: *App, id: u32) !void {
-    var mq = try ctx.pubsub.subscriber();
+    var mq = try ctx.pubsub.client();
     defer mq.deinit();
 
     // 1. Subscribe to everything we care about
-    try mq.subscribe(.cats);
-    try mq.subscribe(.prices);
-    try mq.subscribe(.system_status);
+    if (id != 1) try mq.subscribe(.cats);
+    if (id != 2) try mq.subscribe(.prices);
+    if (id != 3) try mq.subscribe(.system_status);
 
     mq.setTimeout(2 * std.time.ns_per_s);
 
