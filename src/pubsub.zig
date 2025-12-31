@@ -230,7 +230,6 @@ pub fn PubSub(comptime UserPayload: type) type {
             return Subscriber.init(self.allocator, self);
         }
 
-        // Your custom pause/sleep logic
         pub fn togglePause(self: *Self) void {
             _ = self.paused.swap(!self.paused.load(.acquire), .acq_rel);
         }
@@ -238,7 +237,6 @@ pub fn PubSub(comptime UserPayload: type) type {
         pub fn sleep(self: *Self, delay: ?Io.Duration) void {
             self.paused.store(true, .monotonic);
             if (delay) |d| {
-                // Using catch {} as per your snippet
                 self.io.sleep(d, .real) catch {};
                 self.paused.store(false, .monotonic);
             }
@@ -299,7 +297,6 @@ pub fn PubSub(comptime UserPayload: type) type {
             var envelope: ?*RcEnvelope = null;
             var final_payload = payload;
 
-            // Updated smart allocation check
             var use_envelope = false;
             if (@hasDecl(UserPayload, "needsClone")) {
                 use_envelope = payload.needsClone();
