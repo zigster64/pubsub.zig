@@ -17,7 +17,7 @@ pub fn main() !void {
     var app = App{
         .allocator = allocator,
         .io = io,
-        .pubsub = PubSub(AppPayload).init(allocator),
+        .pubsub = PubSub(AppPayload).init(io, allocator),
         .running = std.atomic.Value(bool).init(true),
     };
     defer app.pubsub.deinit();
@@ -31,16 +31,20 @@ pub fn main() !void {
     // wait 30 seconds and add another fast producer
     try std.Io.sleep(app.io, .fromSeconds(20), .real);
     std.debug.print("🚀 Turbo Producer Mode Initiating in 5s\n", .{});
-    try std.Io.sleep(app.io, .fromSeconds(5), .real);
+    app.pubsub.sleep(.fromSeconds(5));
     var f_producer2 = try std.Io.concurrent(io, producer, .{ &app, 50 });
+
     try std.Io.sleep(app.io, .fromSeconds(20), .real);
-    app.pubsub.togglePause();
     std.debug.print("😴 Pausing the whole pubsub system for 20s\n", .{});
+    app.pubsub.sleep(.fromSeconds(20));
+
     try std.Io.sleep(app.io, .fromSeconds(20), .real);
-    app.pubsub.togglePause();
+    std.debug.print("🚀🚀🚀 Super Turbo Producer Mode Initiating in 5s\n", .{});
+    app.pubsub.sleep(.fromSeconds(5));
+    var f_producer3 = try std.Io.concurrent(io, producer, .{ &app, 5 });
 
     try std.Io.sleep(app.io, .fromSeconds(120), .real);
-    app.pubsub.togglePause();
+
     app.running.store(false, .monotonic); // shut the whole thing down !
 
     try f_producer1.await(io);
@@ -49,6 +53,7 @@ pub fn main() !void {
     try f_consumer2.await(io);
     try f_consumer3.await(io);
     try f_producer2.await(io);
+    try f_producer3.await(io);
 }
 
 // App Context and PubSub payload definitions
@@ -105,13 +110,13 @@ fn producer(ctx: *App, delay: i64) !void {
 
     // Send a 'Starting' signal immediately
     try ctx.pubsub.publish(.{ .system_status = .starting });
+    var buf: [64]u8 = undefined;
 
     while (ctx.isRunning()) {
         id_counter += 1;
 
         // 1. Publish Cat (Every tick)
         {
-            var buf: [64]u8 = undefined;
             const name = try std.fmt.bufPrint(&buf, "Cat_{d}", .{id_counter});
             try ctx.pubsub.publish(.{ .cats = .{ .id = id_counter, .name = name } });
         }

@@ -17,7 +17,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         data: UserPayload,
 
         pub fn release(self: *@This(), parent_alloc: Allocator) void {
-            if (self.ref_count.fetchSub(1, .monotonic) == 1) {
+            if (self.ref_count.fetchSub(1, .acq_rel) == 1) {
                 var arena = self.arena;
                 arena.deinit();
                 parent_alloc.destroy(self);
@@ -50,13 +50,14 @@ pub fn PubSub(comptime UserPayload: type) type {
     return struct {
         const Self = @This();
 
+        io: Io,
         allocator: Allocator,
         registry: [TopicCount]std.ArrayListUnmanaged(*Subscriber) = undefined,
         locks: [TopicCount]std.Thread.RwLock = undefined,
         paused: std.atomic.Value(bool) = .init(false),
 
-        pub fn init(allocator: Allocator) Self {
-            var self = Self{ .allocator = allocator };
+        pub fn init(io: Io, allocator: Allocator) Self {
+            var self = Self{ .io = io, .allocator = allocator };
             inline for (0..TopicCount) |i| {
                 self.registry[i] = .empty;
                 self.locks[i] = std.Thread.RwLock{};
@@ -74,8 +75,12 @@ pub fn PubSub(comptime UserPayload: type) type {
             _ = self.paused.swap(!self.paused.load(.acquire), .acq_rel);
         }
 
-        pub fn pause(self: *Self) void {
+        pub fn sleep(self: *Self, delay: ?std.Io.Duration) void {
             self.paused.store(true, .monotonic);
+            if (delay) |d| {
+                self.io.sleep(d, .real) catch {};
+                self.paused.store(false, .monotonic);
+            }
         }
 
         pub fn unpause(self: *Self) void {
@@ -112,7 +117,9 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             for (subs) |sub| {
-                try sub.push(.{ .msg = env });
+                sub.push(.{ .msg = env }) catch {
+                    env.release(self.allocator);
+                };
             }
         }
 
