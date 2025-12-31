@@ -27,8 +27,8 @@ pub fn main() !void {
     var f_consumer2 = try std.Io.concurrent(io, consumer, .{ &app, 2 });
     var f_consumer3 = try std.Io.concurrent(io, consumer, .{ &app, 3 });
 
-    try std.Io.sleep(app.io, .fromSeconds(2), .real);
-    app.running.store(false, .monotonic);
+    try std.Io.sleep(app.io, .fromSeconds(60), .real);
+    app.running.store(false, .monotonic); // shut the whole thing down !
 
     try f_producer.await(io);
     try f_consumer1.await(io);
@@ -87,23 +87,50 @@ pub const AppPayload = union(enum) {
 
 fn producer(ctx: *App) !void {
     var id_counter: u32 = 0;
+
+    // Send a 'Starting' signal immediately
+    try ctx.pubsub.publish(.{ .system_status = .starting });
+
     while (ctx.isRunning()) {
         id_counter += 1;
+
+        // 1. Publish Cat (Every tick)
         {
             var buf: [64]u8 = undefined;
             const name = try std.fmt.bufPrint(&buf, "Cat_{d}", .{id_counter});
-            std.debug.print("[PROD] Publishing {s}\n", .{name});
             try ctx.pubsub.publish(.{ .cats = .{ .id = id_counter, .name = name } });
         }
-        try std.Io.sleep(ctx.io, .fromMilliseconds(500), .real);
+
+        // 2. Publish Price (Every 3rd tick)
+        if (id_counter % 3 == 0) {
+            try ctx.pubsub.publish(.{ .prices = .{ .currency = "USD", .value = id_counter * 150 } });
+        }
+
+        // 3. Simulate Error (Every 10th tick)
+        if (id_counter % 10 == 0) {
+            try ctx.pubsub.publish(.{ .system_status = .err });
+
+            // then sleep for 3 seconds, which will trigger timeouts on the consumers
+            std.debug.print("[PROD] Sleep 3s\n", .{});
+            try std.Io.sleep(ctx.io, .fromSeconds(3), .real);
+        }
+
+        try std.Io.sleep(ctx.io, .fromMilliseconds(200), .real);
     }
+
+    // Send 'Stopping' signal before exit
+    try ctx.pubsub.publish(.{ .system_status = .stopping });
 }
 
 fn consumer(ctx: *App, id: u32) !void {
     var mq = try ctx.pubsub.subscriber();
     defer mq.deinit();
 
+    // 1. Subscribe to everything we care about
     try mq.subscribe(.cats);
+    try mq.subscribe(.prices);
+    try mq.subscribe(.system_status);
+
     mq.setTimeout(2 * std.time.ns_per_s);
 
     std.debug.print("[CONS {d}] Started\n", .{id});
@@ -111,10 +138,32 @@ fn consumer(ctx: *App, id: u32) !void {
     while (ctx.isRunning()) {
         switch (mq.next()) {
             .msg => |m| {
+                // Memory Safety: Ensure we release the ref-counted message
                 defer m.deinit(ctx.allocator);
-                std.debug.print("  -> [CONS {d}] Got Cat: {s}\n", .{ id, m.payload.cats.name });
+
+                switch (m.topic) {
+                    .cats => {
+                        std.debug.print("  -> [CONS {d}] Cat: {s} (ID: {d})\n", .{ id, m.payload.cats.name, m.payload.cats.id });
+                    },
+                    .prices => {
+                        // Accessing .prices payload safely
+                        const p = m.payload.prices;
+                        std.debug.print("  -> [CONS {d}] Market Update: {d} {s}\n", .{ id, p.value, p.currency });
+                    },
+                    .system_status => {
+                        // Enum switching for system status
+                        switch (m.payload.system_status) {
+                            .starting => std.debug.print("  -> [CONS {d}] 🟢 SYSTEM STARTING\n", .{id}),
+                            .stopping => std.debug.print("  -> [CONS {d}] 🔴 SYSTEM STOPPING\n", .{id}),
+                            .err => std.debug.print("  -> [CONS {d}] ⚠️ SYSTEM ERROR\n", .{id}),
+                        }
+                    },
+                }
             },
-            .timeout => {},
+            .timeout => {
+                // Heartbeat logic could go here
+                std.debug.print("  -> [CONS {d}] ⏰ 2s TIMEOUT reading Msg Queue\n", .{id});
+            },
             .err => |e| {
                 std.debug.print("Error: {}\n", .{e});
                 break;
