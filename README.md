@@ -206,7 +206,7 @@ A FilterID is non-exhaustive enum that includes
 - a UUID / u128 value that uniquely identifies the filter within that channel
 
 Then, all subscriptions that you listen on with this client, you will only 
-receive the broadcasts on all those topics that include the FilterIO
+receive the broadcasts on all those topics that include the FilterID
 
 Use Case :  Consider an online game, where you have say - 1000 games in progress,
 each with a handful of players.
