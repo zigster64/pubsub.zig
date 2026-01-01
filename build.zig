@@ -7,10 +7,11 @@ pub fn build(b: *std.Build) void {
     const mod = b.addModule("pubsub", .{
         .root_source_file = b.path("src/pubsub.zig"),
         .target = target,
+        .optimize = optimize,
     });
 
     const exe = b.addExecutable(.{
-        .name = "pubsub",
+        .name = "pubsub-demo",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,
@@ -47,13 +48,11 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "pubsub", .module = mod },
+            },
         }),
     });
-    // This allows @import("pubsub.zig") inside tests.zig to work
-    // Or simpler: tests.zig just uses @import("pubsub.zig") relative path
-    // forcing the test runner to know about the file mapping isn't strictly necessary
-    // if they are in the same folder, but adding the module is cleaner:
-    standalone_tests.root_module.addImport("pubsub_module", mod);
 
     const run_standalone_tests = b.addRunArtifact(standalone_tests);
     test_step.dependOn(&run_standalone_tests.step);
