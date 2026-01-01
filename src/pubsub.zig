@@ -316,25 +316,31 @@ pub fn PubSub(comptime UserPayload: type) type {
             var envelope: ?*RcEnvelope = null;
             var final_payload = payload;
 
+            const can_clone = @hasDecl(UserPayload, "clone");
+
             var use_envelope = false;
             if (@hasDecl(UserPayload, "needsClone")) {
                 use_envelope = payload.needsClone();
-            } else if (@hasDecl(UserPayload, "clone")) {
+            } else if (can_clone) {
                 use_envelope = true;
             }
 
             if (use_envelope) {
-                const env = try self.allocator.create(RcEnvelope);
-                errdefer self.allocator.destroy(env);
+                if (comptime !can_clone) {
+                    return error.PayloadMissingCloneMethod;
+                } else {
+                    const env = try self.allocator.create(RcEnvelope);
+                    errdefer self.allocator.destroy(env);
 
-                env.arena = std.heap.ArenaAllocator.init(self.allocator);
-                errdefer env.arena.deinit();
+                    env.arena = std.heap.ArenaAllocator.init(self.allocator);
+                    errdefer env.arena.deinit();
 
-                final_payload = try payload.clone(env.arena.allocator());
+                    final_payload = try payload.clone(env.arena.allocator());
 
-                env.filter_id = filter_id;
-                env.ref_count = std.atomic.Value(usize).init(target_count);
-                envelope = env;
+                    env.filter_id = filter_id;
+                    env.ref_count = std.atomic.Value(usize).init(target_count);
+                    envelope = env;
+                }
             }
 
             for (subs) |sub| {
