@@ -86,8 +86,18 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn deinit(self: *Subscriber) void {
-                for (self.subscriptions.items) |topic| {
-                    self.parent.unsubscribeRaw(topic, self);
+                // if the schema has only 1 entry then sizeof topic is 0
+                if (@sizeOf(Topic) == 0) {
+                    const count = self.subscriptions.items.len;
+                    var i: usize = 0;
+                    while (i < count) : (i += 1) {
+                        // Since there's only one topic, index is always 0
+                        self.parent.unsubscribeRaw(@enumFromInt(0), self);
+                    }
+                } else {
+                    for (self.subscriptions.items) |topic| {
+                        self.parent.unsubscribeRaw(topic, self);
+                    }
                 }
 
                 if (self.active_envelope) |env| {
@@ -105,7 +115,9 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
                 self.mutex.unlock(); // Unlock before destroying the queue
 
-                self.subscriptions.deinit(self.allocator);
+                if (@sizeOf(Topic) != 0) {
+                    self.subscriptions.deinit(self.allocator);
+                }
                 self.queue.deinit(self.allocator);
             }
 
@@ -190,8 +202,15 @@ pub fn PubSub(comptime UserPayload: type) type {
                 self.parent.locks[index].lock();
                 defer self.parent.locks[index].unlock();
                 try self.parent.registry[index].append(self.parent.allocator, self);
-                try self.subscriptions.append(self.allocator, topic);
+
+                // If the schema has only 1 entry, then sizeof schema is 0
+                if (@sizeOf(Topic) == 0) {
+                    self.subscriptions.items.len += 1;
+                } else {
+                    try self.subscriptions.append(self.allocator, topic);
+                }
             }
+
             pub fn push(self: *Subscriber, item: QueueNode) !void {
                 self.mutex.lock();
                 defer self.mutex.unlock();
