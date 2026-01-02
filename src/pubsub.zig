@@ -64,6 +64,21 @@ pub fn PubSub(comptime UserPayload: type) type {
         pub const Event = union(enum) {
             msg: Message,
             timeout: void,
+
+            pub fn format(
+                self: Event,
+                comptime fmt: []const u8,
+                options: std.fmt.FormatOptions,
+                writer: anytype,
+            ) !void {
+                _ = fmt;
+                _ = options;
+
+                switch (self) {
+                    .msg => |m| try writer.print("msg(topic: {any})", .{m.topic}),
+                    .timeout => try writer.writeAll("timeout"),
+                }
+            }
         };
 
         pub const Subscriber = struct {
