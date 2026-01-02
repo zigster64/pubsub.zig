@@ -307,7 +307,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             for (subs) |sub| {
                 const raw = sub.filter_id.load(.monotonic);
                 const sub_id: FilterId = @enumFromInt(raw);
-                if (sub_id == .all or filter_id == .all or sub_id == filter_id) {
+                if (filter_id == .all or sub_id == filter_id) {
                     target_count += 1;
                 }
             }
@@ -347,7 +347,7 @@ pub fn PubSub(comptime UserPayload: type) type {
                 const raw = sub.filter_id.load(.monotonic);
                 const sub_id: FilterId = @enumFromInt(raw);
 
-                if (sub_id == .all or filter_id == .all or sub_id == filter_id) {
+                if (filter_id == .all or sub_id == filter_id) {
                     sub.push(.{ .data = .{ .payload = final_payload, .envelope = envelope } }) catch {
                         if (envelope) |e| e.release(self.allocator);
                     };

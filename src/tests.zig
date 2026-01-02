@@ -146,29 +146,36 @@ test "PubSub: Filter Routing" {
         if (e == .msg) e.msg.deinit(allocator);
     } else return error.ExpectedMsgB;
 
-    // 2. Targeted A -> Both (because B is .all)
+    // 2. Targeted A -> only A gets it, B gets a timeout
     try pubsub.publish(.{ .ping = {} }, filter_a);
 
+    sub_b.setTimeout(std.time.ns_per_ms * 250);
     if ((try sub_a.next())) |e| {
         if (e == .msg) e.msg.deinit(allocator);
     } else return error.ExpectedMsgA_Targeted;
     if ((try sub_b.next())) |e| {
-        if (e == .msg) e.msg.deinit(allocator);
-    } else return error.ExpectedMsgB_Targeted;
+        switch (e) {
+            .msg => |m| {
+                m.deinit(allocator);
+                return error.BShouldNotReceiveFiltered;
+            },
+            .timeout => {}, // thats what we want, because B never gets the message
+        }
+    } else return error.ExpectedMsgB_Targeted_ShouldGetTimeout;
 
     // 3. Targeted B -> A should NOT get it
     const filter_b = FilterId.from(0xBBBB_BBBB);
     try pubsub.publish(.{ .ping = {} }, filter_b);
 
-    sub_a.setTimeout(1);
+    sub_a.setTimeout(std.time.ns_per_ms * 250);
     const res = try sub_a.next();
     if (res) |e| {
         switch (e) {
             .msg => |m| {
                 m.deinit(allocator);
-                return error.ShouldNotReceive;
+                return error.AShouldNotReceiveFiltered;
             },
-            .timeout => {},
+            .timeout => {}, // thats what we want
         }
     }
 }
