@@ -2,8 +2,8 @@
 
 ![Cyberpunk Zig PubSub Architecture](assets/pubsub.jpg)
 
-This repo is just a test jig for setting up a PubSub service for use in Zig 0.16
-with an example producer/consumer and broadcast pattern
+This repo is for setting up an embedded PubSub service for use in Zig 0.16
+with an example producer/consumer and broadcast pattern.
 
 This code is currently limited to `std.Io.Threaded` ... in theory it should also 
 work with `std.Io.Evented` coroutines, but we are not there yet with stdlib.
