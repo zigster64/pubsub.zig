@@ -205,6 +205,16 @@ A FilterID is non-exhaustive enum that includes
 - .all for broadcast to all subscribers
 - a UUID / u128 value that uniquely identifies the filter within that channel
 
+You can set values of type `FilterId` using either of these functions
+```zig
+// Will convert to a u128 using type conversion.
+// Use this to convert numbers up to 128bits wide
+FilterId.fromInt(value: anytype) FilterId 
+
+// Will convert slices / char strings via 128 bit hashing
+// Use this if you have strings as your keys
+FilterId.fromSlice(slice: []const u8) FilterId
+```
 Then, all subscriptions that you listen on with this client, you will only 
 receive the broadcasts on all those topics that include the FilterID
 

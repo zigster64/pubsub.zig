@@ -11,7 +11,7 @@ pub const FilterId = enum(u128) {
 
     // Allow the user to apply strings if they really want,
     // in which case we just use the u128 hash of the string
-    pub fn fromSlice(slice: []const u8) @This() {
+    pub fn fromSlice(slice: []const u8) FilterId {
         if (std.mem.eql(u8, slice, "all")) return .all;
         const hash = std.hash.Fnv1a_128.hash(slice);
         return @enumFromInt(hash);
