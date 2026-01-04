@@ -8,6 +8,9 @@ pub const FilterId = enum(u128) {
     pub fn from(uuid: u128) FilterId {
         return @enumFromInt(uuid);
     }
+    pub fn parseInt(buf: []const u8) !FilterId {
+        return .from(try std.fmt.parseInt(u128, buf, 10));
+    }
 };
 
 pub fn PubSub(comptime UserPayload: type) type {
