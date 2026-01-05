@@ -2,9 +2,8 @@
     .name = .pubsub,
     .version = "0.0.0",
     .fingerprint = 0xbdbea79b01b6dce9,
-    .minimum_zig_version = "0.16.0-dev.1657+985a3565c",
-    .dependencies = .{
-    },
+    .minimum_zig_version = "0.16.0-dev.1912+0cbaaa5eb",
+    .dependencies = .{},
     .paths = .{
         "build.zig",
         "build.zig.zon",
