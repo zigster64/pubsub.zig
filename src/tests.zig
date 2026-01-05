@@ -125,7 +125,7 @@ test "PubSub: Filter Routing" {
     defer pubsub.deinit();
 
     const uuid_a = 0xAAAA_AAAA_AAAA_AAAA;
-    const filter_a = FilterId.from(uuid_a);
+    const filter_a = FilterId.fromInt(uuid_a);
 
     var sub_a = try pubsub.connect();
     defer sub_a.deinit();
@@ -149,7 +149,7 @@ test "PubSub: Filter Routing" {
     // 2. Targeted A -> only A gets it, B gets a timeout
     try pubsub.publish(.{ .ping = {} }, filter_a);
 
-    sub_b.setTimeout(std.time.ns_per_ms * 250);
+    sub_b.setTimeout(.fromMilliseconds(250));
     if ((try sub_a.next())) |e| {
         if (e == .msg) e.msg.deinit(allocator);
     } else return error.ExpectedMsgA_Targeted;
@@ -164,10 +164,10 @@ test "PubSub: Filter Routing" {
     } else return error.ExpectedMsgB_Targeted_ShouldGetTimeout;
 
     // 3. Targeted B -> A should NOT get it
-    const filter_b = FilterId.from(0xBBBB_BBBB);
+    const filter_b = FilterId.fromInt(0xBBBB_BBBB);
     try pubsub.publish(.{ .ping = {} }, filter_b);
 
-    sub_a.setTimeout(std.time.ns_per_ms * 250);
+    sub_a.setTimeout(.fromMilliseconds(250));
     const res = try sub_a.next();
     if (res) |e| {
         switch (e) {

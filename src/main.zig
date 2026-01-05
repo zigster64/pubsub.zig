@@ -170,7 +170,7 @@ fn consumer(ctx: *App, id: u32) !void {
     if (id != 2) try mq.subscribe(.prices);
     if (id != 3) try mq.subscribe(.system_status);
 
-    mq.setTimeout(2 * std.time.ns_per_s);
+    mq.setTimeout(.fromSeconds(2));
 
     std.debug.print("[CONS {d}] Started\n", .{id});
 

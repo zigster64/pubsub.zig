@@ -92,7 +92,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             cond: std.Thread.Condition = .{},
             subscriptions: std.ArrayList(Topic) = .empty,
             filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
-            timeout_ns: ?u64 = null,
+            timeout: ?std.Io.Duration = null,
             active_envelope: ?*RcEnvelope = null,
 
             pub fn init(allocator: Allocator, parent: *Self) !Subscriber {
@@ -164,9 +164,8 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
 
                 while (self.queue.len == 0) {
-                    if (self.timeout_ns) |ns| {
-                        // TODO - this will probably change soon to std.Io.something
-                        self.cond.timedWait(&self.mutex, ns) catch |err| {
+                    if (self.timeout) |timeout| {
+                        self.cond.timedWait(&self.mutex, @intCast(timeout.toNanoseconds())) catch |err| {
                             if (err == error.Timeout) return .timeout;
                             return err;
                         };
@@ -209,10 +208,10 @@ pub fn PubSub(comptime UserPayload: type) type {
                 self.filter_id.store(@intFromEnum(id), .monotonic);
             }
 
-            pub fn setTimeout(self: *Subscriber, ns: u64) void {
+            pub fn setTimeout(self: *Subscriber, duration: std.Io.Duration) void {
                 self.mutex.lock();
                 defer self.mutex.unlock();
-                self.timeout_ns = ns;
+                self.timeout = duration;
             }
 
             pub fn subscribe(self: *Subscriber, topic: Topic) !void {
