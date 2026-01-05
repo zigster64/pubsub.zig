@@ -43,7 +43,7 @@ test "PubSub: Basic Signal (Zero Alloc)" {
     const allocator = testing.allocator;
 
     // Use Real IO
-    var threaded = Io.Threaded.init(allocator);
+    var threaded = Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -70,7 +70,7 @@ test "PubSub: Basic Signal (Zero Alloc)" {
 test "PubSub: Complex Data (Reference Counting)" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator);
+    var threaded = Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -117,7 +117,7 @@ test "PubSub: Complex Data (Reference Counting)" {
 test "PubSub: Filter Routing" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator);
+    var threaded = Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -201,7 +201,7 @@ fn producer_thread(io: Io, ctx: *E2EContext) void {
 test "PubSub: E2E Concurrent Producer/Consumer" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator);
+    var threaded = Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -217,8 +217,10 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
     try sub.subscribe(.ping);
 
     // 2. NOW SPAWN PRODUCER
-    const t_prod = try std.Thread.spawn(.{}, producer_thread, .{ io, &ctx });
-    defer t_prod.join();
+    var t_prod = try io.concurrent(producer_thread, .{ io, &ctx });
+    defer t_prod.cancel(io);
+    // const t_prod = try std.Thread.spawn(.{}, producer_thread, .{ io, &ctx });
+    // defer t_prod.join();
 
     // 3. START CONSUMING
     var count: u32 = 0;
@@ -244,7 +246,7 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
 test "PubSub: E2E Concurrent Producer/Consumer out of order" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator);
+    var threaded = Io.Threaded.init(allocator, .{});
     defer threaded.deinit();
     const io = threaded.io();
 

@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 pub fn main() !void {
     const smp = std.heap.smp_allocator;
 
-    var threaded: Io.Threaded = .init(smp);
+    var threaded: Io.Threaded = .init(smp, .{});
     // at some point, Evented with Kqueue will be available, but not today
     // var threaded: Io.Evented = .init(kq, smp, .{});
     defer threaded.deinit();
