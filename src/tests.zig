@@ -219,8 +219,6 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
     // 2. NOW SPAWN PRODUCER
     var t_prod = try io.concurrent(producer_thread, .{ io, &ctx });
     defer t_prod.cancel(io);
-    // const t_prod = try std.Thread.spawn(.{}, producer_thread, .{ io, &ctx });
-    // defer t_prod.join();
 
     // 3. START CONSUMING
     var count: u32 = 0;
@@ -255,8 +253,8 @@ test "PubSub: E2E Concurrent Producer/Consumer out of order" {
 
     var ctx = E2EContext{ .ps = &pubsub };
 
-    const t_prod = try std.Thread.spawn(.{}, producer_thread, .{ io, &ctx });
-    defer t_prod.join();
+    var t_prod = try io.concurrent(producer_thread, .{ io, &ctx });
+    defer t_prod.cancel(io);
 
     // producer is pumping away - we defs going to miss the first few
     // if we dont, then there is something horribly out of whack with the threading
