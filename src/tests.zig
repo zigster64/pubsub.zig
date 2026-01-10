@@ -43,7 +43,7 @@ test "PubSub: Basic Signal (Zero Alloc)" {
     const allocator = testing.allocator;
 
     // Use Real IO
-    var threaded = Io.Threaded.init(allocator, .{});
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -70,7 +70,7 @@ test "PubSub: Basic Signal (Zero Alloc)" {
 test "PubSub: Complex Data (Reference Counting)" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator, .{});
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -117,7 +117,7 @@ test "PubSub: Complex Data (Reference Counting)" {
 test "PubSub: Filter Routing" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator, .{});
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -201,7 +201,7 @@ fn producer_thread(io: Io, ctx: *E2EContext) void {
 test "PubSub: E2E Concurrent Producer/Consumer" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator, .{});
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
     defer threaded.deinit();
     const io = threaded.io();
 
@@ -244,7 +244,7 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
 test "PubSub: E2E Concurrent Producer/Consumer out of order" {
     const allocator = testing.allocator;
 
-    var threaded = Io.Threaded.init(allocator, .{});
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
     defer threaded.deinit();
     const io = threaded.io();
 
