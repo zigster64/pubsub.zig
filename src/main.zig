@@ -5,20 +5,14 @@ const PubSub = pubsub_module.PubSub;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
-pub fn main() !void {
-    const smp = std.heap.smp_allocator;
-
-    var threaded: Io.Threaded = .init(smp, .{});
-    // at some point, Evented with Kqueue will be available, but not today
-    // var threaded: Io.Evented = .init(kq, smp, .{});
-    defer threaded.deinit();
-    threaded.stack_size = 2 * 1024 * 1024;
-    const io = threaded.io();
+pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const allocator = init.arena.allocator();
 
     var app = App{
-        .allocator = smp,
+        .allocator = allocator,
         .io = io,
-        .pubsub = PubSub(MsgSchema).init(io, smp),
+        .pubsub = PubSub(MsgSchema).init(io, allocator),
     };
     defer app.pubsub.deinit();
 
