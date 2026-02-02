@@ -335,8 +335,9 @@ ie
 
 Even VTable like `sleep()` are @panic("TODO") in stdlib still, so proceed with caution :)
 
-Running the fiber based demo does work - processes a few hundred messages with correct context
-switching, and then panics with memory alignment issues doing arena.dupe()
+Running the fiber based demo does work - although I had to add a mutex in the pubsub struct 
+to avoid having multiple things all trying to publish concurrently - that seems to generate
+some memory alignment errors pretty quickly if you dont.
 
 So yeah - async concurrency does seem to work OK. Proceed with massive caution though till its 
 officially released.
