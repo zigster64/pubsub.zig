@@ -23,6 +23,14 @@ pub fn PubSub(comptime UserPayload: type) type {
     const TopicCount = std.meta.fields(Topic).len;
 
     return struct {
+        io: Io,
+        allocator: Allocator,
+        registry: [TopicCount]std.ArrayList(*Subscriber) = undefined,
+        locks: [TopicCount]std.Thread.RwLock = undefined,
+        paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+        mutex: std.Thread.Mutex = .{},
+
         const Self = @This();
 
         const RcEnvelope = struct {
@@ -231,18 +239,6 @@ pub fn PubSub(comptime UserPayload: type) type {
                 self.cond.signal();
             }
         };
-
-        // --------------------------------------------------------
-        // Main Fields & Methods
-        // --------------------------------------------------------
-
-        io: Io,
-        allocator: Allocator,
-        registry: [TopicCount]std.ArrayList(*Subscriber) = undefined,
-        locks: [TopicCount]std.Thread.RwLock = undefined,
-        paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
-        running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-        mutex: std.Thread.Mutex = .{},
 
         pub fn init(io: Io, allocator: Allocator) Self {
             var self = Self{ .io = io, .allocator = allocator };
