@@ -4,16 +4,22 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // -------------------------------------------------------------------------
+    // Export the module
+    // -------------------------------------------------------------------------
     const mod = b.addModule("pubsub", .{
         .root_source_file = b.path("src/pubsub.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    const exe = b.addExecutable(.{
-        .name = "pubsub-demo",
+    // -------------------------------------------------------------------------
+    // Demo app
+    // -------------------------------------------------------------------------
+    const thread_exe = b.addExecutable(.{
+        .name = "demo_threads",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/main.zig"),
+            .root_source_file = b.path("src/demo_threads.zig"),
             .target = target,
             .optimize = optimize,
             .imports = &.{
@@ -22,12 +28,35 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    b.installArtifact(exe);
+    b.installArtifact(thread_exe);
 
-    const run_step = b.step("run", "Run the app");
+    const run_step = b.step("demo_threads", "Run the demo app using threads");
 
-    const run_cmd = b.addRunArtifact(exe);
+    const run_cmd = b.addRunArtifact(thread_exe);
     run_step.dependOn(&run_cmd.step);
+
+    // -------------------------------------------------------------------------
+    // Demo app using fibers and evented IO
+    // -------------------------------------------------------------------------
+
+    const fiber_exe = b.addExecutable(.{
+        .name = "demo_fibers",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/demo_fibers.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{
+                .{ .name = "pubsub", .module = mod },
+            },
+        }),
+    });
+
+    // b.installArtifact(fiber_exe);
+
+    const run_fiber_step = b.step("demo_fibers", "Run the demo app using fibers");
+
+    const run_fiber_cmd = b.addRunArtifact(fiber_exe);
+    run_fiber_step.dependOn(&run_fiber_cmd.step);
 
     // -------------------------------------------------------------------------
     // TEST CONFIGURATION

@@ -25,10 +25,6 @@ pub fn PubSub(comptime UserPayload: type) type {
     return struct {
         const Self = @This();
 
-        // --------------------------------------------------------
-        // Internal Types
-        // --------------------------------------------------------
-
         const RcEnvelope = struct {
             ref_count: std.atomic.Value(usize),
             arena: std.heap.ArenaAllocator,
@@ -246,6 +242,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         locks: [TopicCount]std.Thread.RwLock = undefined,
         paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+        mutex: std.Thread.Mutex = .{},
 
         pub fn init(io: Io, allocator: Allocator) Self {
             var self = Self{ .io = io, .allocator = allocator };
@@ -310,6 +307,8 @@ pub fn PubSub(comptime UserPayload: type) type {
 
         pub fn publish(self: *Self, payload: UserPayload, filter_id: FilterId) !void {
             if (self.paused.load(.monotonic)) return;
+            self.mutex.lock();
+            defer self.mutex.unlock();
 
             const topic = std.meta.activeTag(payload);
             const index = @intFromEnum(topic);

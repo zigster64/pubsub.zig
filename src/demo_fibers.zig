@@ -6,15 +6,17 @@ const Io = std.Io;
 const Allocator = std.mem.Allocator;
 
 pub fn main(init: std.process.Init) !void {
-    const io = init.io;
     const allocator = init.arena.allocator();
 
-    var app = App{
-        .allocator = allocator,
-        .io = io,
-        .pubsub = PubSub(MsgSchema).init(io, allocator),
-    };
-    defer app.pubsub.deinit();
+    // instead of using Io.Threaded, lets use an Evented IO and run
+    // the producer and consumer in fibers
+    // TODO - if Linux using IoUring, if windows use ... something else ?
+    var kq: std.Io.Kqueue = undefined;
+    try kq.init(allocator, .{});
+    const io = kq.io();
+
+    var app = App.init(init.io, io, allocator);
+    defer app.deinit();
 
     var f_producer1 = try std.Io.concurrent(io, producer, .{ &app, 200 });
     var f_consumer0 = try std.Io.concurrent(io, consumer, .{ &app, 0 });
@@ -24,21 +26,22 @@ pub fn main(init: std.process.Init) !void {
     var f_batsignal = try std.Io.concurrent(io, batsignal, .{&app});
 
     // wait 30 seconds and add another fast producer
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try app.sleep(.fromSeconds(20));
+
     std.debug.print("🚀 Turbo Producer Mode Initiating in 5s\n", .{});
-    app.pubsub.sleep(.fromSeconds(5));
+    try app.sleep(.fromSeconds(5));
     var f_producer2 = try std.Io.concurrent(io, producer, .{ &app, 50 });
 
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .real);
     std.debug.print("😴 Pausing the whole pubsub system for 20s\n", .{});
-    app.pubsub.sleep(.fromSeconds(20));
+    try app.sleep(.fromSeconds(20));
 
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .real);
     std.debug.print("🚀🚀🚀 Super Turbo Producer Mode Initiating in 5s\n", .{});
-    app.pubsub.sleep(.fromSeconds(5));
+    try app.sleep(.fromSeconds(5));
     var f_producer3 = try std.Io.concurrent(io, producer, .{ &app, 5 });
 
-    try std.Io.sleep(app.io, .fromSeconds(120), .real);
+    try app.sleep(.fromSeconds(120));
 
     // shutdown the pubsub operation
     app.pubsub.shutdown();
@@ -55,16 +58,26 @@ pub fn main(init: std.process.Init) !void {
 
 // App Context and PubSub payload definitions
 const App = struct {
-    io: std.Io,
+    io: Io,
+    threaded_io: Io,
     allocator: Allocator,
     pubsub: PubSub(MsgSchema),
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator) App {
+    pub fn init(threaded: Io, io: Io, allocator: std.mem.Allocator) App {
         return .{
             .io = io,
+            .threaded_io = threaded,
             .allocator = allocator,
-            .pubsub = PubSub(MsgSchema).init(allocator),
+            .pubsub = PubSub(MsgSchema).init(io, allocator),
         };
+    }
+
+    pub fn deinit(app: *App) void {
+        app.pubsub.deinit();
+    }
+
+    pub fn sleep(app: *App, duration: Io.Duration) !void {
+        try app.threaded_io.sleep(duration, .real);
     }
 };
 
@@ -137,7 +150,7 @@ fn producer(ctx: *App, delay: i64) !void {
 
             // then sleep for 3 seconds, which will trigger timeouts on the consumers
             std.debug.print("[PROD] Sleep 3s\n", .{});
-            try std.Io.sleep(ctx.io, .fromSeconds(3), .real);
+            try ctx.sleep(.fromSeconds(3));
         }
 
         // 4. Issue the bat signal every 25th tick
@@ -145,7 +158,7 @@ fn producer(ctx: *App, delay: i64) !void {
             try ctx.pubsub.publish(.{ .bat_signal = {} }, .all);
         }
 
-        try std.Io.sleep(ctx.io, .fromMilliseconds(delay), .real);
+        try ctx.sleep(.fromMilliseconds(delay));
     }
 
     // Send 'Stopping' signal before exit

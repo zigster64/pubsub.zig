@@ -295,6 +295,52 @@ pubsub.isRunning() bool;
 ```
 To read the current state.
 
+# Using Fibers for IO instead of Threaded
+
+This library is built and tested using Io.Threaded
+
+It should be possible to run this using fibers / Evented IO, but as of 
+0.16.0-dev.2368+380ea6fb5
+
+.. thats not quite there yet.
+
+There is demo app provided here that uses Io.KQueue to provide fibers, and 
+use these fibers to host the publisher and subscriber concurrent functions.
+
+It works up to a point, to prove that Evented IO should work.
+
+To get this even compiling though, need to patch
+$ZIG_PATH/lib/std/Io/Kqueue.zig
+
+.. to fill in the missing parts of the VTable
+
+ie 
+```
+...
+            .netInterfaceNameResolve = netInterfaceNameResolve,
+            .netInterfaceName = netInterfaceName,
+            .netLookup = netLookup,
+
+            // just get fibers compiling for now !!
+            .recancel = undefined,
+            .swapCancelProtection = undefined,
+            .checkCancel = undefined,
+            .futexWait = undefined,
+            .futexWaitUncancelable = undefined,
+            .futexWake = undefined,
+            .dirCreateFileAtomic = undefined,
+            .dirRead = undefined,
+... lots and lots more
+```
+
+Even VTable like `sleep()` are @panic("TODO") in stdlib still, so proceed with caution :)
+
+Running the fiber based demo does work - processes a few hundred messages with correct context
+switching, and then panics with memory alignment issues doing arena.dupe()
+
+So yeah - async concurrency does seem to work OK. Proceed with massive caution though till its 
+officially released.
+
 # TODO 
 
 The above functions are all I need for now to finish off the embedded PubSub that I need now for
