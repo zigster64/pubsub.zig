@@ -26,10 +26,10 @@ pub fn PubSub(comptime UserPayload: type) type {
         io: Io,
         allocator: Allocator,
         registry: [TopicCount]std.ArrayList(*Subscriber) = undefined,
-        locks: [TopicCount]std.Thread.RwLock = undefined,
+        locks: [TopicCount]Io.RwLock = undefined,
         paused: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
         running: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
-        mutex: std.Thread.Mutex = .{},
+        mutex: Io.Mutex = .init,
 
         const Self = @This();
 
@@ -90,18 +90,20 @@ pub fn PubSub(comptime UserPayload: type) type {
 
         pub const Subscriber = struct {
             allocator: Allocator,
+            io: Io,
             parent: *Self,
             queue: std.Deque(QueueNode),
-            mutex: std.Thread.Mutex = .{},
-            cond: std.Thread.Condition = .{},
+            mutex: Io.Mutex = .init,
+            cond: Io.Condition = .init,
             subscriptions: std.ArrayList(Topic) = .empty,
             filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
             timeout: ?std.Io.Duration = null,
             active_envelope: ?*RcEnvelope = null,
 
-            pub fn init(allocator: Allocator, parent: *Self) !Subscriber {
+            pub fn init(allocator: Allocator, io: Io, parent: *Self) !Subscriber {
                 return .{
                     .allocator = allocator,
+                    .io = io,
                     .parent = parent,
                     .queue = try std.Deque(QueueNode).initCapacity(allocator, 1024),
                 };
@@ -128,14 +130,14 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
 
                 //    This prevents race conditions with Shutdown() calling sub.close()
-                self.mutex.lock();
+                self.mutex.lockUncancelable(self.io);
                 while (self.queue.popFront()) |item| {
                     switch (item) {
                         .data => |d| if (d.envelope) |e| e.release(self.allocator),
                         else => {},
                     }
                 }
-                self.mutex.unlock(); // Unlock before destroying the queue
+                self.mutex.unlock(self.io); // Unlock before destroying the queue
 
                 if (@sizeOf(Topic) != 0) {
                     self.subscriptions.deinit(self.allocator);
@@ -145,7 +147,7 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             pub fn manualRelease(self: *Subscriber, env_ptr: ?*RcEnvelope, alloc: Allocator) void {
                 const e = env_ptr orelse return;
-                self.mutex.lock();
+                self.mutex.lockUncancelable(self.io);
                 defer self.mutex.unlock();
                 if (self.active_envelope == e) {
                     self.active_envelope = null;
@@ -159,8 +161,8 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn next(self: *Subscriber) !?Event {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
 
                 if (self.active_envelope) |env| {
                     env.release(self.allocator);
@@ -169,12 +171,15 @@ pub fn PubSub(comptime UserPayload: type) type {
 
                 while (self.queue.len == 0) {
                     if (self.timeout) |timeout| {
-                        self.cond.timedWait(&self.mutex, @intCast(timeout.toNanoseconds())) catch |err| {
-                            if (err == error.Timeout) return .timeout;
+                        _ = timeout; // autofix
+                        self.cond.wait(self.io, &self.mutex) catch |err| {
                             return err;
                         };
+                        // .self.cond.timedWait(&self.mutex, @intCast(timeout.toNanoseconds())) catch |err| {
+                        // if (err == error.Timeout) return .timeout;
+                        // return err;
                     } else {
-                        self.cond.wait(&self.mutex);
+                        try self.cond.wait(self.io, &self.mutex);
                     }
                 }
 
@@ -213,15 +218,15 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn setTimeout(self: *Subscriber, duration: std.Io.Duration) void {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
                 self.timeout = duration;
             }
 
             pub fn subscribe(self: *Subscriber, topic: Topic) !void {
                 const index = @intFromEnum(topic);
-                self.parent.locks[index].lock();
-                defer self.parent.locks[index].unlock();
+                self.parent.locks[index].lockUncancelable(self.io);
+                defer self.parent.locks[index].unlock(self.io);
                 try self.parent.registry[index].append(self.parent.allocator, self);
 
                 // If the schema has only 1 entry, then sizeof schema is 0
@@ -233,10 +238,10 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn push(self: *Subscriber, item: QueueNode) !void {
-                self.mutex.lock();
-                defer self.mutex.unlock();
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
                 try self.queue.pushBack(self.allocator, item);
-                self.cond.signal();
+                self.cond.signal(self.io);
             }
         };
 
@@ -244,7 +249,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             var self = Self{ .io = io, .allocator = allocator };
             inline for (0..TopicCount) |i| {
                 self.registry[i] = std.ArrayList(*Subscriber).empty;
-                self.locks[i] = std.Thread.RwLock{};
+                self.locks[i] = std.Io.RwLock.init;
             }
             return self;
         }
@@ -256,7 +261,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         }
 
         pub fn connect(self: *Self) !Subscriber {
-            return Subscriber.init(self.allocator, self);
+            return Subscriber.init(self.allocator, self.io, self);
         }
 
         pub fn togglePause(self: *Self) void {
@@ -284,8 +289,8 @@ pub fn PubSub(comptime UserPayload: type) type {
             self.running.store(false, .seq_cst);
 
             inline for (0..TopicCount) |i| {
-                self.locks[i].lockShared();
-                defer self.locks[i].unlockShared();
+                self.locks[i].lockSharedUncancelable(self.io);
+                defer self.locks[i].unlockShared(self.io);
 
                 for (self.registry[i].items) |sub| {
                     sub.close();
@@ -303,14 +308,14 @@ pub fn PubSub(comptime UserPayload: type) type {
 
         pub fn publish(self: *Self, payload: UserPayload, filter_id: FilterId) !void {
             if (self.paused.load(.monotonic)) return;
-            self.mutex.lock();
-            defer self.mutex.unlock();
+            self.mutex.lockUncancelable(self.io);
+            defer self.mutex.unlock(self.io);
 
             const topic = std.meta.activeTag(payload);
             const index = @intFromEnum(topic);
 
-            self.locks[index].lockShared();
-            defer self.locks[index].unlockShared();
+            self.locks[index].lockSharedUncancelable(self.io);
+            defer self.locks[index].unlockShared(self.io);
 
             const subs = self.registry[index].items;
             if (subs.len == 0) return;
@@ -369,8 +374,8 @@ pub fn PubSub(comptime UserPayload: type) type {
 
         fn unsubscribeRaw(self: *Self, topic: Topic, sub: *Subscriber) void {
             const index = @intFromEnum(topic);
-            self.locks[index].lock();
-            defer self.locks[index].unlock();
+            self.locks[index].lockUncancelable(self.io);
+            defer self.locks[index].unlock(self.io);
 
             var list = &self.registry[index];
             for (list.items, 0..) |item, i| {
