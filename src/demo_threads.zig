@@ -7,7 +7,7 @@ const Allocator = std.mem.Allocator;
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const allocator = init.arena.allocator();
+    const allocator = std.heap.smp_allocator;
 
     var app = App.init(io, allocator);
     defer app.deinit();

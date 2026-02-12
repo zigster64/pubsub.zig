@@ -93,7 +93,8 @@ pub fn PubSub(comptime UserPayload: type) type {
             io: Io,
             parent: *Self,
             queue: std.Deque(QueueNode),
-            mutex: Io.Mutex = .init,
+            state_mutex: Io.Mutex = .init,
+            event_mutex: Io.Mutex = .init,
             cond: Io.Condition = .init,
             subscriptions: std.ArrayList(Topic) = .empty,
             filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
@@ -130,14 +131,14 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
 
                 //    This prevents race conditions with Shutdown() calling sub.close()
-                self.mutex.lockUncancelable(self.io);
+                self.state_mutex.lockUncancelable(self.io);
                 while (self.queue.popFront()) |item| {
                     switch (item) {
                         .data => |d| if (d.envelope) |e| e.release(self.allocator),
                         else => {},
                     }
                 }
-                self.mutex.unlock(self.io); // Unlock before destroying the queue
+                self.state_mutex.unlock(self.io); // Unlock before destroying the queue
 
                 if (@sizeOf(Topic) != 0) {
                     self.subscriptions.deinit(self.allocator);
@@ -147,8 +148,8 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             pub fn manualRelease(self: *Subscriber, env_ptr: ?*RcEnvelope, alloc: Allocator) void {
                 const e = env_ptr orelse return;
-                self.mutex.lockUncancelable(self.io);
-                defer self.mutex.unlock();
+                self.state_mutex.lock(self.io) catch return;
+                defer self.state_mutex.unlock();
                 if (self.active_envelope == e) {
                     self.active_envelope = null;
                     e.release(alloc);
@@ -161,42 +162,68 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn next(self: *Subscriber) !?Event {
-                self.mutex.lockUncancelable(self.io);
-                defer self.mutex.unlock(self.io);
+                self.event_mutex.lockUncancelable(self.io);
+                defer {
+                    self.event_mutex.unlock(self.io);
+                }
 
                 if (self.active_envelope) |env| {
                     env.release(self.allocator);
                     self.active_envelope = null;
                 }
 
+                const SelectTypes = union(enum) {
+                    condition_wait: error{Canceled}!void,
+                    timeout: error{Canceled}!void,
+                };
+
+                var buffer: [2]SelectTypes = undefined;
+
                 while (self.queue.len == 0) {
+                    var select = Io.Select(SelectTypes).init(self.io, &buffer);
+                    select.async(.condition_wait, Io.Condition.wait, .{
+                        &self.cond,
+                        self.io,
+                        &self.event_mutex,
+                    });
                     if (self.timeout) |timeout| {
-                        _ = timeout; // autofix
-                        self.cond.wait(self.io, &self.mutex) catch |err| {
-                            return err;
-                        };
-                        // .self.cond.timedWait(&self.mutex, @intCast(timeout.toNanoseconds())) catch |err| {
-                        // if (err == error.Timeout) return .timeout;
-                        // return err;
-                    } else {
-                        try self.cond.wait(self.io, &self.mutex);
+                        select.async(.timeout, Io.Clock.Duration.sleep, .{
+                            .{ .raw = timeout, .clock = .real },
+                            self.io,
+                        });
+                    }
+
+                    // This will block until either the signal hits or the timer fires
+                    const result = try select.await();
+                    select.cancel(); // needed if timeout wins, we need to unlock the condition
+
+                    switch (result) {
+                        .condition_wait => |res| try res,
+                        .timeout => |res| {
+                            try res;
+                            return Event{ .timeout = {} }; // Return a timeout event to the consumer
+                        },
                     }
                 }
 
-                const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
+                {
+                    self.state_mutex.lockUncancelable(self.io);
+                    defer self.state_mutex.unlock(self.io);
+                    const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
 
-                switch (item) {
-                    .data => |d| {
-                        if (d.envelope) |env| self.active_envelope = env;
-                        return Event{ .msg = Message{
-                            .envelope = d.envelope,
-                            .payload = d.payload,
-                            .topic = std.meta.activeTag(d.payload),
-                            .filter_id = if (d.envelope) |e| e.filter_id else .all,
-                            .subscriber = self,
-                        } };
-                    },
-                    .quit => return null,
+                    switch (item) {
+                        .data => |d| {
+                            if (d.envelope) |env| self.active_envelope = env;
+                            return Event{ .msg = Message{
+                                .envelope = d.envelope,
+                                .payload = d.payload,
+                                .topic = std.meta.activeTag(d.payload),
+                                .filter_id = if (d.envelope) |e| e.filter_id else .all,
+                                .subscriber = self,
+                            } };
+                        },
+                        .quit => return null,
+                    }
                 }
             }
 
@@ -218,8 +245,8 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn setTimeout(self: *Subscriber, duration: std.Io.Duration) void {
-                self.mutex.lockUncancelable(self.io);
-                defer self.mutex.unlock(self.io);
+                self.state_mutex.lock(self.io) catch return;
+                defer self.state_mutex.unlock(self.io);
                 self.timeout = duration;
             }
 
@@ -238,8 +265,8 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn push(self: *Subscriber, item: QueueNode) !void {
-                self.mutex.lockUncancelable(self.io);
-                defer self.mutex.unlock(self.io);
+                self.state_mutex.lock(self.io) catch return;
+                defer self.state_mutex.unlock(self.io);
                 try self.queue.pushBack(self.allocator, item);
                 self.cond.signal(self.io);
             }

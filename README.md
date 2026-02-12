@@ -14,6 +14,17 @@ https://github.com/zigster64/datastar.zig
 
 Which uses this pubSub code to build real-time collaborative web apps - all from the backend, all in Zig
 
+## Timeouts and Zig 0.16
+
+Note that as of 0.16.0-dev.2535+b5bd49460, the std.Io is still in a great state of change,
+so this code will be modified to suit.
+
+the timeout function will only work if you build with -Doptimize=ReleaseFast, and dont use
+the debug allocator.
+
+As things improve with 0.16, will fix that ... but for now, either avoid using timeout at 
+all, or strictly with ReleaseFast and smp_allocator.
+
 ## Create a Payload definition schema
 
 The PubSub system transmits structured messages to consumers via a queue.
