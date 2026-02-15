@@ -163,9 +163,7 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             pub fn next(self: *Subscriber) !?Event {
                 self.event_mutex.lockUncancelable(self.io);
-                defer {
-                    self.event_mutex.unlock(self.io);
-                }
+                defer self.event_mutex.unlock(self.io);
 
                 if (self.active_envelope) |env| {
                     env.release(self.allocator);
@@ -194,7 +192,7 @@ pub fn PubSub(comptime UserPayload: type) type {
                     }
 
                     // This will block until either the signal hits or the timer fires
-                    const result = try select.await();
+                    const result = select.await() catch continue;
                     select.cancel(); // needed if timeout wins, we need to unlock the condition
 
                     switch (result) {
