@@ -93,12 +93,11 @@ pub fn PubSub(comptime UserPayload: type) type {
             io: Io,
             parent: *Self,
             queue: std.Deque(QueueNode),
-            state_mutex: Io.Mutex = .init,
-            event_mutex: Io.Mutex = .init,
+            mutex: Io.Mutex = .init,
+            new_message: Io.Event = .unset,
             cond: Io.Condition = .init,
             subscriptions: std.ArrayList(Topic) = .empty,
             filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
-            timeout: ?std.Io.Duration = null,
             active_envelope: ?*RcEnvelope = null,
 
             pub fn init(allocator: Allocator, io: Io, parent: *Self) !Subscriber {
@@ -131,14 +130,14 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
 
                 //    This prevents race conditions with Shutdown() calling sub.close()
-                self.state_mutex.lockUncancelable(self.io);
+                self.mutex.lockUncancelable(self.io);
                 while (self.queue.popFront()) |item| {
                     switch (item) {
                         .data => |d| if (d.envelope) |e| e.release(self.allocator),
                         else => {},
                     }
                 }
-                self.state_mutex.unlock(self.io); // Unlock before destroying the queue
+                self.mutex.unlock(self.io); // Unlock before destroying the queue
 
                 if (@sizeOf(Topic) != 0) {
                     self.subscriptions.deinit(self.allocator);
@@ -148,8 +147,8 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             pub fn manualRelease(self: *Subscriber, env_ptr: ?*RcEnvelope, alloc: Allocator) void {
                 const e = env_ptr orelse return;
-                self.state_mutex.lock(self.io) catch return;
-                defer self.state_mutex.unlock();
+                self.mutex.lock(self.io) catch return;
+                defer self.mutex.unlock();
                 if (self.active_envelope == e) {
                     self.active_envelope = null;
                     e.release(alloc);
@@ -162,21 +161,32 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn next(self: *Subscriber) !?Event {
-                self.event_mutex.lockUncancelable(self.io);
-                defer self.event_mutex.unlock(self.io);
+                return try self.nextRaw(.none);
+            }
 
+            pub fn nextTimeout(self: *Subscriber, d: Io.Duration) !?Event {
+                return try self.nextRaw(.{
+                    .duration = .{
+                        .clock = .awake,
+                        .raw = d,
+                    },
+                });
+            }
+
+            fn nextRaw(self: *Subscriber, t: Io.Timeout) !?Event {
                 if (self.active_envelope) |env| {
                     env.release(self.allocator);
                     self.active_envelope = null;
                 }
 
                 while (self.queue.len == 0) {
-                    Io.Condition.waitUncancelable(&self.cond, self.io, &self.event_mutex);
+                    defer self.new_message.reset();
+                    self.new_message.waitTimeout(self.io, t) catch return .{ .timeout = {} };
                 }
 
                 {
-                    self.state_mutex.lockUncancelable(self.io);
-                    defer self.state_mutex.unlock(self.io);
+                    self.mutex.lockUncancelable(self.io);
+                    defer self.mutex.unlock(self.io);
                     const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
 
                     switch (item) {
@@ -221,7 +231,7 @@ pub fn PubSub(comptime UserPayload: type) type {
                     });
                     if (self.timeout) |timeout| {
                         select.async(.timeout, Io.Clock.Duration.sleep, .{
-                            .{ .raw = timeout, .clock = .real },
+                            .{ .raw = timeout, .clock = .awake },
                             self.io,
                         });
                     }
@@ -240,8 +250,8 @@ pub fn PubSub(comptime UserPayload: type) type {
                 }
 
                 {
-                    self.state_mutex.lockUncancelable(self.io);
-                    defer self.state_mutex.unlock(self.io);
+                    self.mutex.lockUncancelable(self.io);
+                    defer self.mutex.unlock(self.io);
                     const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
 
                     switch (item) {
@@ -277,12 +287,6 @@ pub fn PubSub(comptime UserPayload: type) type {
                 self.filter_id.store(@intFromEnum(id), .monotonic);
             }
 
-            pub fn setTimeout(self: *Subscriber, duration: std.Io.Duration) void {
-                self.state_mutex.lock(self.io) catch return;
-                defer self.state_mutex.unlock(self.io);
-                self.timeout = duration;
-            }
-
             pub fn subscribe(self: *Subscriber, topic: Topic) !void {
                 const index = @intFromEnum(topic);
                 self.parent.locks[index].lockUncancelable(self.io);
@@ -298,10 +302,10 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn push(self: *Subscriber, item: QueueNode) !void {
-                self.state_mutex.lock(self.io) catch return;
-                defer self.state_mutex.unlock(self.io);
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
                 try self.queue.pushBack(self.allocator, item);
-                self.cond.signal(self.io);
+                self.new_message.set(self.io);
             }
         };
 
@@ -331,7 +335,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         pub fn sleep(self: *Self, delay: ?Io.Duration) void {
             self.paused.store(true, .monotonic);
             if (delay) |d| {
-                self.io.sleep(d, .real) catch {};
+                self.io.sleep(d, .awake) catch {};
                 self.paused.store(false, .monotonic);
             }
         }

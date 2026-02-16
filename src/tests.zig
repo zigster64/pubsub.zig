@@ -193,7 +193,7 @@ fn producer_thread(io: Io, ctx: *E2EContext) void {
     while (i < 100) : (i += 1) {
         ctx.ps.publish(.{ .data = .{ .id = i, .content = "data" } }, .all) catch {};
         // Tiny sleep to yield
-        std.Io.sleep(io, .fromNanoseconds(10_000), .real) catch {};
+        std.Io.sleep(io, .fromNanoseconds(10_000), .awake) catch {};
     }
     ctx.ps.publish(.{ .ping = {} }, .all) catch {};
 }

@@ -32,11 +32,11 @@ pub fn main(init: std.process.Init) !void {
     try app.sleep(.fromSeconds(5));
     var f_producer2 = try std.Io.concurrent(io, producer, .{ &app, 50 });
 
-    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .awake);
     std.debug.print("😴 Pausing the whole pubsub system for 20s\n", .{});
     try app.sleep(.fromSeconds(20));
 
-    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.threaded_io, .fromSeconds(20), .awake);
     std.debug.print("🚀🚀🚀 Super Turbo Producer Mode Initiating in 5s\n", .{});
     try app.sleep(.fromSeconds(5));
     var f_producer3 = try std.Io.concurrent(io, producer, .{ &app, 5 });
@@ -77,7 +77,7 @@ const App = struct {
     }
 
     pub fn sleep(app: *App, duration: Io.Duration) !void {
-        try app.threaded_io.sleep(duration, .real);
+        try app.threaded_io.sleep(duration, .awake);
     }
 };
 

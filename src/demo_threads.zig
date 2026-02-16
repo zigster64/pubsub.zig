@@ -20,21 +20,21 @@ pub fn main(init: std.process.Init) !void {
     var f_batsignal = try std.Io.concurrent(io, batsignal, .{&app});
 
     // wait 30 seconds and add another fast producer
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.io, .fromSeconds(20), .awake);
     std.debug.print("🚀 Turbo Producer Mode Initiating in 5s\n", .{});
     app.pubsub.sleep(.fromSeconds(5));
     var f_producer2 = try std.Io.concurrent(io, producer, .{ &app, 50 });
 
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.io, .fromSeconds(20), .awake);
     std.debug.print("😴 Pausing the whole pubsub system for 20s\n", .{});
     app.pubsub.sleep(.fromSeconds(20));
 
-    try std.Io.sleep(app.io, .fromSeconds(20), .real);
+    try std.Io.sleep(app.io, .fromSeconds(20), .awake);
     std.debug.print("🚀🚀🚀 Super Turbo Producer Mode Initiating in 5s\n", .{});
     app.pubsub.sleep(.fromSeconds(5));
     var f_producer3 = try std.Io.concurrent(io, producer, .{ &app, 5 });
 
-    try std.Io.sleep(app.io, .fromSeconds(120), .real);
+    try std.Io.sleep(app.io, .fromSeconds(120), .awake);
 
     // shutdown the pubsub operation
     app.pubsub.shutdown();
@@ -137,7 +137,7 @@ fn producer(ctx: *App, delay: i64) !void {
 
             // then sleep for 3 seconds, which will trigger timeouts on the consumers
             std.debug.print("[PROD] Sleep 3s\n", .{});
-            try std.Io.sleep(ctx.io, .fromSeconds(3), .real);
+            try std.Io.sleep(ctx.io, .fromSeconds(3), .awake);
         }
 
         // 4. Issue the bat signal every 25th tick
@@ -145,7 +145,7 @@ fn producer(ctx: *App, delay: i64) !void {
             try ctx.pubsub.publish(.{ .bat_signal = {} }, .all);
         }
 
-        try std.Io.sleep(ctx.io, .fromMilliseconds(delay), .real);
+        try std.Io.sleep(ctx.io, .fromMilliseconds(delay), .awake);
     }
 
     // Send 'Stopping' signal before exit
@@ -164,12 +164,10 @@ fn consumer(ctx: *App, id: u32) !void {
     if (id != 2) try mq.subscribe(.prices);
     if (id != 3) try mq.subscribe(.system_status);
 
-    mq.setTimeout(.fromSeconds(2));
-
     std.debug.print("[CONS {d}] Started\n", .{id});
 
     while (ctx.pubsub.isRunning()) {
-        const event = (try mq.next()) orelse return; // no more messages
+        const event = try mq.nextTimeout(.fromSeconds(2)) orelse return; // no more messages
         switch (event) {
             .msg => |m| {
                 switch (m.topic) {
