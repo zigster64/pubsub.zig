@@ -170,6 +170,41 @@ pub fn PubSub(comptime UserPayload: type) type {
                     self.active_envelope = null;
                 }
 
+                while (self.queue.len == 0) {
+                    Io.Condition.waitUncancelable(&self.cond, self.io, &self.event_mutex);
+                }
+
+                {
+                    self.state_mutex.lockUncancelable(self.io);
+                    defer self.state_mutex.unlock(self.io);
+                    const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
+
+                    switch (item) {
+                        .data => |d| {
+                            if (d.envelope) |env| self.active_envelope = env;
+                            return Event{ .msg = Message{
+                                .envelope = d.envelope,
+                                .payload = d.payload,
+                                .topic = std.meta.activeTag(d.payload),
+                                .filter_id = if (d.envelope) |e| e.filter_id else .all,
+                                .subscriber = self,
+                            } };
+                        },
+                        .quit => return null,
+                    }
+                }
+            }
+
+            // when they sort out timers and cancellation, plug this back in as next()
+            pub fn nextWithTimer(self: *Subscriber) !?Event {
+                self.event_mutex.lockUncancelable(self.io);
+                defer self.event_mutex.unlock(self.io);
+
+                if (self.active_envelope) |env| {
+                    env.release(self.allocator);
+                    self.active_envelope = null;
+                }
+
                 const SelectTypes = union(enum) {
                     condition_wait: error{Canceled}!void,
                     timeout: error{Canceled}!void,
@@ -333,8 +368,8 @@ pub fn PubSub(comptime UserPayload: type) type {
 
         pub fn publish(self: *Self, payload: UserPayload, filter_id: FilterId) !void {
             if (self.paused.load(.monotonic)) return;
-            self.mutex.lockUncancelable(self.io);
-            defer self.mutex.unlock(self.io);
+            // self.mutex.lockUncancelable(self.io);
+            // defer self.mutex.unlock(self.io);
 
             const topic = std.meta.activeTag(payload);
             const index = @intFromEnum(topic);
