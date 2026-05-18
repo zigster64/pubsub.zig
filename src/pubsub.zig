@@ -95,10 +95,10 @@ pub fn PubSub(comptime UserPayload: type) type {
             queue: std.Deque(QueueNode),
             mutex: Io.Mutex = .init,
             new_message: Io.Event = .unset,
-            cond: Io.Condition = .init,
             subscriptions: std.ArrayList(Topic) = .empty,
             filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
             active_envelope: ?*RcEnvelope = null,
+            timeout: ?Io.Duration = null,
 
             pub fn init(allocator: Allocator, io: Io, parent: *Self) !Subscriber {
                 return .{
@@ -148,7 +148,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             pub fn manualRelease(self: *Subscriber, env_ptr: ?*RcEnvelope, alloc: Allocator) void {
                 const e = env_ptr orelse return;
                 self.mutex.lock(self.io) catch return;
-                defer self.mutex.unlock();
+                defer self.mutex.unlock(self.io);
                 if (self.active_envelope == e) {
                     self.active_envelope = null;
                     e.release(alloc);
@@ -160,8 +160,24 @@ pub fn PubSub(comptime UserPayload: type) type {
                 self.push(.quit) catch {};
             }
 
+            pub fn setTimeout(self: *Subscriber, d: Io.Duration) void {
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
+                self.timeout = d;
+            }
+
+            pub fn clearTimeout(self: *Subscriber) void {
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
+                self.timeout = null;
+            }
+
             pub fn next(self: *Subscriber) !?Event {
-                return try self.nextRaw(.none);
+                const t: Io.Timeout = if (self.timeout) |d|
+                    .{ .duration = .{ .clock = .awake, .raw = d } }
+                else
+                    .none;
+                return try self.nextRaw(t);
             }
 
             pub fn nextTimeout(self: *Subscriber, d: Io.Duration) !?Event {
@@ -182,71 +198,6 @@ pub fn PubSub(comptime UserPayload: type) type {
                 while (self.queue.len == 0) {
                     defer self.new_message.reset();
                     self.new_message.waitTimeout(self.io, t) catch return .{ .timeout = {} };
-                }
-
-                {
-                    self.mutex.lockUncancelable(self.io);
-                    defer self.mutex.unlock(self.io);
-                    const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
-
-                    switch (item) {
-                        .data => |d| {
-                            if (d.envelope) |env| self.active_envelope = env;
-                            return Event{ .msg = Message{
-                                .envelope = d.envelope,
-                                .payload = d.payload,
-                                .topic = std.meta.activeTag(d.payload),
-                                .filter_id = if (d.envelope) |e| e.filter_id else .all,
-                                .subscriber = self,
-                            } };
-                        },
-                        .quit => return null,
-                    }
-                }
-            }
-
-            // when they sort out timers and cancellation, plug this back in as next()
-            pub fn nextWithTimer(self: *Subscriber) !?Event {
-                self.event_mutex.lockUncancelable(self.io);
-                defer self.event_mutex.unlock(self.io);
-
-                if (self.active_envelope) |env| {
-                    env.release(self.allocator);
-                    self.active_envelope = null;
-                }
-
-                const SelectTypes = union(enum) {
-                    condition_wait: error{Canceled}!void,
-                    timeout: error{Canceled}!void,
-                };
-
-                var buffer: [2]SelectTypes = undefined;
-
-                while (self.queue.len == 0) {
-                    var select = Io.Select(SelectTypes).init(self.io, &buffer);
-                    select.async(.condition_wait, Io.Condition.wait, .{
-                        &self.cond,
-                        self.io,
-                        &self.event_mutex,
-                    });
-                    if (self.timeout) |timeout| {
-                        select.async(.timeout, Io.Clock.Duration.sleep, .{
-                            .{ .raw = timeout, .clock = .awake },
-                            self.io,
-                        });
-                    }
-
-                    // This will block until either the signal hits or the timer fires
-                    const result = select.await() catch continue;
-                    select.cancel(); // needed if timeout wins, we need to unlock the condition
-
-                    switch (result) {
-                        .condition_wait => |res| try res,
-                        .timeout => |res| {
-                            try res;
-                            return Event{ .timeout = {} }; // Return a timeout event to the consumer
-                        },
-                    }
                 }
 
                 {

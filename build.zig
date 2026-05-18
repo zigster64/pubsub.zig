@@ -36,29 +36,6 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // -------------------------------------------------------------------------
-    // Demo app using fibers and evented IO
-    // -------------------------------------------------------------------------
-
-    const fiber_exe = b.addExecutable(.{
-        .name = "demo_fibers",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/demo_fibers.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "pubsub", .module = mod },
-            },
-        }),
-    });
-
-    // b.installArtifact(fiber_exe);
-
-    const run_fiber_step = b.step("demo_fibers", "Run the demo app using fibers");
-
-    const run_fiber_cmd = b.addRunArtifact(fiber_exe);
-    run_fiber_step.dependOn(&run_fiber_cmd.step);
-
-    // -------------------------------------------------------------------------
     // TEST CONFIGURATION
     // -------------------------------------------------------------------------
     const test_step = b.step("test", "Run all tests");
