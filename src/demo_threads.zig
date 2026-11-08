@@ -79,7 +79,7 @@ pub const FilterId = enum(u128) {
 
     /// Helper to convert a raw UUID integer into a FilterId
     pub fn from(uuid: u128) FilterId {
-        return @fromBackingInt(@intCast(uuid));
+        return @fromBackingInt(uuid);
     }
 };
 

@@ -6,7 +6,7 @@ pub const FilterId = enum(u128) {
     all = 0,
     _,
     pub fn fromInt(value: anytype) FilterId {
-        return @fromBackingInt(@intCast(@as(u128, value)));
+        return @fromBackingInt(@as(u128, value));
     }
 
     // Allow the user to apply strings if they really want,
@@ -14,7 +14,7 @@ pub const FilterId = enum(u128) {
     pub fn fromSlice(slice: []const u8) FilterId {
         if (std.mem.eql(u8, slice, "all")) return .all;
         const hash = std.hash.Fnv1a_128.hash(slice);
-        return @fromBackingInt(@intCast(hash));
+        return @fromBackingInt(hash);
     }
 };
 
@@ -116,7 +116,7 @@ pub fn PubSub(comptime UserPayload: type) type {
                     var i: usize = 0;
                     while (i < count) : (i += 1) {
                         // Since there's only one topic, index is always 0
-                        self.parent.unsubscribeRaw(@fromBackingInt(@intCast(0)), self);
+                        self.parent.unsubscribeRaw(@fromBackingInt(0), self);
                     }
                 } else {
                     for (self.subscriptions.items) |topic| {
@@ -338,7 +338,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             var target_count: usize = 0;
             for (subs) |sub| {
                 const raw = sub.filter_id.load(.monotonic);
-                const sub_id: FilterId = @fromBackingInt(@intCast(raw));
+                const sub_id: FilterId = @fromBackingInt(raw);
                 if (filter_id == .all or sub_id == filter_id) {
                     target_count += 1;
                 }
@@ -377,7 +377,7 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             for (subs) |sub| {
                 const raw = sub.filter_id.load(.monotonic);
-                const sub_id: FilterId = @fromBackingInt(@intCast(raw));
+                const sub_id: FilterId = @fromBackingInt(raw);
 
                 if (filter_id == .all or sub_id == filter_id) {
                     sub.push(.{ .data = .{ .payload = final_payload, .envelope = envelope } }) catch {
