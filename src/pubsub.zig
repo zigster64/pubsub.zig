@@ -6,7 +6,7 @@ pub const FilterId = enum(u128) {
     all = 0,
     _,
     pub fn fromInt(value: anytype) FilterId {
-        return @enumFromInt(@as(u128, value));
+        return @fromBackingInt(@intCast(@as(u128, value)));
     }
 
     // Allow the user to apply strings if they really want,
@@ -14,13 +14,13 @@ pub const FilterId = enum(u128) {
     pub fn fromSlice(slice: []const u8) FilterId {
         if (std.mem.eql(u8, slice, "all")) return .all;
         const hash = std.hash.Fnv1a_128.hash(slice);
-        return @enumFromInt(hash);
+        return @fromBackingInt(@intCast(hash));
     }
 };
 
 pub fn PubSub(comptime UserPayload: type) type {
     const Topic = std.meta.Tag(UserPayload);
-    const TopicCount = std.meta.fields(Topic).len;
+    const TopicCount = std.enums.values(Topic).len;
 
     return struct {
         io: Io,
@@ -96,7 +96,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             mutex: Io.Mutex = .init,
             new_message: Io.Event = .unset,
             subscriptions: std.ArrayList(Topic) = .empty,
-            filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@intFromEnum(FilterId.all)),
+            filter_id: std.atomic.Value(u128) = std.atomic.Value(u128).init(@backingInt(FilterId.all)),
             active_envelope: ?*RcEnvelope = null,
             timeout: ?Io.Duration = null,
 
@@ -116,7 +116,7 @@ pub fn PubSub(comptime UserPayload: type) type {
                     var i: usize = 0;
                     while (i < count) : (i += 1) {
                         // Since there's only one topic, index is always 0
-                        self.parent.unsubscribeRaw(@enumFromInt(0), self);
+                        self.parent.unsubscribeRaw(@fromBackingInt(@intCast(0)), self);
                     }
                 } else {
                     for (self.subscriptions.items) |topic| {
@@ -235,11 +235,11 @@ pub fn PubSub(comptime UserPayload: type) type {
             }
 
             pub fn setFilter(self: *Subscriber, id: FilterId) void {
-                self.filter_id.store(@intFromEnum(id), .monotonic);
+                self.filter_id.store(@backingInt(id), .monotonic);
             }
 
             pub fn subscribe(self: *Subscriber, topic: Topic) !void {
-                const index = @intFromEnum(topic);
+                const index = @backingInt(topic);
                 self.parent.locks[index].lockUncancelable(self.io);
                 defer self.parent.locks[index].unlock(self.io);
                 try self.parent.registry[index].append(self.parent.allocator, self);
@@ -327,7 +327,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             // defer self.mutex.unlock(self.io);
 
             const topic = std.meta.activeTag(payload);
-            const index = @intFromEnum(topic);
+            const index = @backingInt(topic);
 
             self.locks[index].lockSharedUncancelable(self.io);
             defer self.locks[index].unlockShared(self.io);
@@ -338,7 +338,7 @@ pub fn PubSub(comptime UserPayload: type) type {
             var target_count: usize = 0;
             for (subs) |sub| {
                 const raw = sub.filter_id.load(.monotonic);
-                const sub_id: FilterId = @enumFromInt(raw);
+                const sub_id: FilterId = @fromBackingInt(@intCast(raw));
                 if (filter_id == .all or sub_id == filter_id) {
                     target_count += 1;
                 }
@@ -377,7 +377,7 @@ pub fn PubSub(comptime UserPayload: type) type {
 
             for (subs) |sub| {
                 const raw = sub.filter_id.load(.monotonic);
-                const sub_id: FilterId = @enumFromInt(raw);
+                const sub_id: FilterId = @fromBackingInt(@intCast(raw));
 
                 if (filter_id == .all or sub_id == filter_id) {
                     sub.push(.{ .data = .{ .payload = final_payload, .envelope = envelope } }) catch {
@@ -388,7 +388,7 @@ pub fn PubSub(comptime UserPayload: type) type {
         }
 
         fn unsubscribeRaw(self: *Self, topic: Topic, sub: *Subscriber) void {
-            const index = @intFromEnum(topic);
+            const index = @backingInt(topic);
             self.locks[index].lockUncancelable(self.io);
             defer self.locks[index].unlock(self.io);
 
