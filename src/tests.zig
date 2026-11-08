@@ -180,6 +180,38 @@ test "PubSub: Filter Routing" {
     }
 }
 
+test "PubSub: Single Topic Schema (Zero Size Tag)" {
+    const allocator = testing.allocator;
+
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const SingleTopic = union(enum) { only: u32 };
+    var pubsub = PubSubModule.PubSub(SingleTopic).init(io, allocator);
+    defer pubsub.deinit();
+
+    {
+        var sub = try pubsub.connect();
+        defer sub.deinit();
+        try sub.subscribe(.only);
+
+        try pubsub.publish(.{ .only = 7 }, .all);
+
+        const event = (try sub.next()) orelse return error.NullEvent;
+        switch (event) {
+            .msg => |m| {
+                defer m.deinit(allocator);
+                try testing.expectEqual(@as(u32, 7), m.payload.only);
+            },
+            else => return error.WrongEventType,
+        }
+    }
+
+    // deinit has to take the subscriber back out of the registry
+    try testing.expectEqual(@as(usize, 0), pubsub.registry[0].items.len);
+}
+
 // -------------------------------------------------------------------------
 // 3. E2E CONCURRENCY TEST
 // -------------------------------------------------------------------------
