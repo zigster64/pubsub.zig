@@ -195,29 +195,33 @@ pub fn PubSub(comptime UserPayload: type) type {
                     self.active_envelope = null;
                 }
 
-                while (self.queue.len == 0) {
-                    defer self.new_message.reset();
-                    self.new_message.waitTimeout(self.io, t) catch return .{ .timeout = {} };
-                }
+                while (true) {
+                    {
+                        self.mutex.lockUncancelable(self.io);
+                        defer self.mutex.unlock(self.io);
 
-                {
-                    self.mutex.lockUncancelable(self.io);
-                    defer self.mutex.unlock(self.io);
-                    const item = self.queue.popFront() orelse return error.UnexpectedEmpty;
+                        if (self.queue.popFront()) |item| {
+                            switch (item) {
+                                .data => |d| {
+                                    if (d.envelope) |env| self.active_envelope = env;
+                                    return Event{ .msg = Message{
+                                        .envelope = d.envelope,
+                                        .payload = d.payload,
+                                        .topic = std.meta.activeTag(d.payload),
+                                        .filter_id = if (d.envelope) |e| e.filter_id else .all,
+                                        .subscriber = self,
+                                    } };
+                                },
+                                .quit => return null,
+                            }
+                        }
 
-                    switch (item) {
-                        .data => |d| {
-                            if (d.envelope) |env| self.active_envelope = env;
-                            return Event{ .msg = Message{
-                                .envelope = d.envelope,
-                                .payload = d.payload,
-                                .topic = std.meta.activeTag(d.payload),
-                                .filter_id = if (d.envelope) |e| e.filter_id else .all,
-                                .subscriber = self,
-                            } };
-                        },
-                        .quit => return null,
+                        // Reset under the lock while the queue is empty. push sets the
+                        // event under the same lock, so it cannot be lost.
+                        self.new_message.reset();
                     }
+
+                    self.new_message.waitTimeout(self.io, t) catch return .{ .timeout = {} };
                 }
             }
 
