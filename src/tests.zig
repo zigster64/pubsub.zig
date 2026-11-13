@@ -180,6 +180,38 @@ test "PubSub: Filter Routing" {
     }
 }
 
+test "PubSub: Single Topic Schema (Zero Size Tag)" {
+    const allocator = testing.allocator;
+
+    var threaded = Io.Threaded.init(allocator, .{ .environ = .empty });
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const SingleTopic = union(enum) { only: u32 };
+    var pubsub = PubSubModule.PubSub(SingleTopic).init(io, allocator);
+    defer pubsub.deinit();
+
+    {
+        var sub = try pubsub.connect();
+        defer sub.deinit();
+        try sub.subscribe(.only);
+
+        try pubsub.publish(.{ .only = 7 }, .all);
+
+        const event = (try sub.next()) orelse return error.NullEvent;
+        switch (event) {
+            .msg => |m| {
+                defer m.deinit(allocator);
+                try testing.expectEqual(@as(u32, 7), m.payload.only);
+            },
+            else => return error.WrongEventType,
+        }
+    }
+
+    // deinit has to take the subscriber back out of the registry
+    try testing.expectEqual(@as(usize, 0), pubsub.registry[0].items.len);
+}
+
 // -------------------------------------------------------------------------
 // 3. E2E CONCURRENCY TEST
 // -------------------------------------------------------------------------
@@ -241,6 +273,27 @@ test "PubSub: E2E Concurrent Producer/Consumer" {
     try testing.expectEqual(count, 100);
 }
 
+const LateSubscriberContext = struct {
+    ps: *PS,
+    early_published: Io.Event = .unset,
+    subscribed: Io.Event = .unset,
+};
+
+const early_message_count = 10;
+
+fn late_subscriber_producer(io: Io, ctx: *LateSubscriberContext) void {
+    for (0..early_message_count) |i| {
+        ctx.ps.publish(.{ .data = .{ .id = @intCast(i), .content = "data" } }, .all) catch {};
+    }
+    ctx.early_published.set(io);
+    ctx.subscribed.waitUncancelable(io);
+
+    for (early_message_count..100) |i| {
+        ctx.ps.publish(.{ .data = .{ .id = @intCast(i), .content = "data" } }, .all) catch {};
+    }
+    ctx.ps.publish(.{ .ping = {} }, .all) catch {};
+}
+
 test "PubSub: E2E Concurrent Producer/Consumer out of order" {
     const allocator = testing.allocator;
 
@@ -251,19 +304,20 @@ test "PubSub: E2E Concurrent Producer/Consumer out of order" {
     var pubsub = PS.init(io, allocator);
     defer pubsub.deinit();
 
-    var ctx = E2EContext{ .ps = &pubsub };
+    var ctx = LateSubscriberContext{ .ps = &pubsub };
 
-    var t_prod = try io.concurrent(producer_thread, .{ io, &ctx });
+    var t_prod = try io.concurrent(late_subscriber_producer, .{ io, &ctx });
     defer t_prod.cancel(io);
 
-    // producer is pumping away - we defs going to miss the first few
-    // if we dont, then there is something horribly out of whack with the threading
-    // implementation
+    // Subscribing only after the early messages went out means exactly those are
+    // missed, whatever the scheduler or the optimize mode does.
+    ctx.early_published.waitUncancelable(io);
 
     var sub = try pubsub.connect();
     defer sub.deinit();
     try sub.subscribe(.data);
     try sub.subscribe(.ping);
+    ctx.subscribed.set(io);
 
     var count: u32 = 0;
     while (true) {
@@ -281,5 +335,5 @@ test "PubSub: E2E Concurrent Producer/Consumer out of order" {
         }
     }
 
-    try testing.expect(count < 100);
+    try testing.expectEqual(100 - early_message_count, count);
 }

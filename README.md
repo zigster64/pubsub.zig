@@ -1,6 +1,6 @@
 # pubsub.zig
 
-An embedded, type-safe, in-process pub/sub engine for Zig 0.16.
+An embedded, type-safe, in-process pub/sub engine for Zig 0.17.
 
 ![Cyberpunk Zig PubSub Architecture](assets/pubsub.jpg)
 
@@ -14,9 +14,7 @@ Used by the [Zig Datastar Webserver](https://github.com/zigster64/datastar.zig) 
 
 ## Zig Version
 
-Requires Zig 0.16
-
-Ongoing experimental work happening in the 0.17 branch (adding fibers and coroutine support using vanilla stdlib as it evolves)
+Requires Zig 0.17
 
 ## Example
 
